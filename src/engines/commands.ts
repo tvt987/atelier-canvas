@@ -120,6 +120,27 @@ export const COMMAND_CATALOG: CommandItem[] = [
     keywords: ['export', 'svg', 'png', 'html', 'download', 'tsx', 'code'],
   },
   {
+    id: 'mode-toggle-3dstack',
+    title: 'Toggle 3D Stack Depth Explode View',
+    subtitle: 'Inspect every z-index layer floating in interactive 3D space',
+    category: 'mode',
+    keywords: ['3d', 'stack', 'explode', 'depth', 'layers', 'isometric'],
+  },
+  {
+    id: 'project-save-file',
+    title: 'Save Project as .atelier.json',
+    subtitle: 'Download complete multi-artboard project file locally',
+    category: 'export',
+    keywords: ['save', 'project', 'atelier', 'json', 'backup', 'file'],
+  },
+  {
+    id: 'template-editorial',
+    title: 'Load Template: Luxury Editorial Campaign (Real Photography)',
+    subtitle: 'Switch artboard to Hasselblad editorial photography spread',
+    category: 'template',
+    keywords: ['template', 'luxury', 'editorial', 'photo', 'photography', 'campaign'],
+  },
+  {
     id: 'template-swiss',
     title: 'Load Template: Swiss Exhibition Poster',
     subtitle: 'Switch artboard to International Typographic poster',

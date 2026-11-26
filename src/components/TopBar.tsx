@@ -1,9 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
 import {
+  Check,
   ChevronDown,
   Code2,
   Command,
   Download,
+  FolderOpen,
   History,
   Maximize2,
   Minus,
@@ -12,7 +14,9 @@ import {
   Play,
   Plus,
   Redo2,
+  RefreshCw,
   RotateCcw,
+  Save,
   Sparkles,
   Sun,
   Undo2,
@@ -31,6 +35,10 @@ interface TopBarProps {
   snapshots: DesignSnapshot[];
   onSaveSnapshot: (label?: string) => void;
   onRestoreSnapshot: (snapshotId: string) => void;
+  onExportProjectFile: () => void;
+  onImportProjectFile: (file: File) => void;
+  onResetWorkspace: () => void;
+  savedLocally: boolean;
   zoom: number;
   onZoomIn: () => void;
   onZoomOut: () => void;
@@ -61,6 +69,10 @@ export function TopBar({
   snapshots,
   onSaveSnapshot,
   onRestoreSnapshot,
+  onExportProjectFile,
+  onImportProjectFile,
+  onResetWorkspace,
+  savedLocally,
   zoom,
   onZoomIn,
   onZoomOut,
@@ -86,6 +98,7 @@ export function TopBar({
   const [snapshotDraft, setSnapshotDraft] = useState('');
   const menuRef = useRef<HTMLDivElement>(null);
   const snapRef = useRef<HTMLDivElement>(null);
+  const projectFileInputRef = useRef<HTMLInputElement>(null);
 
   const activeTemplate =
     TEMPLATE_PRESETS.find((t) => t.id === templateId) ?? TEMPLATE_PRESETS[0];
@@ -111,7 +124,20 @@ export function TopBar({
         borderColor: 'var(--studio-border)',
       }}
     >
-      {/* Left: Brand Identity + Template Selector + Undo/Redo */}
+      {/* Hidden Project File Input */}
+      <input
+        ref={projectFileInputRef}
+        type="file"
+        accept=".json,.atelier.json,application/json"
+        className="hidden"
+        onChange={(e) => {
+          const file = e.target.files?.[0];
+          if (file) onImportProjectFile(file);
+          e.target.value = '';
+        }}
+      />
+
+      {/* Left: Brand Identity + Template Selector + Undo/Redo + File/History */}
       <div className="flex items-center gap-1.5 min-w-0">
         <div
           className="flex items-center gap-2 pr-2 border-r shrink-0"
@@ -148,7 +174,7 @@ export function TopBar({
                 backgroundColor: 'var(--studio-surface-2)',
               }}
             >
-              v2
+              v3
             </span>
           </div>
         </div>
@@ -267,13 +293,13 @@ export function TopBar({
           </button>
         </div>
 
-        {/* Design Version Snapshots Popover */}
-        <div className="relative hidden lg:block" ref={snapRef}>
+        {/* File (.atelier.json) + Local Auto-Save + Version Snapshots */}
+        <div className="relative hidden lg:flex items-center gap-1.5" ref={snapRef}>
           <button
             type="button"
             data-testid="btn-snapshots"
             onClick={() => setSnapshotsOpen((v) => !v)}
-            title="Design Version Snapshots"
+            title="Project File (.atelier.json) & Design Version Snapshots"
             className="h-7 px-2 rounded-md border flex items-center gap-1.5 text-[10px] font-mono-tech transition-colors cursor-pointer"
             style={{
               backgroundColor: snapshotsOpen
@@ -296,15 +322,86 @@ export function TopBar({
             </span>
           </button>
 
+          {savedLocally && (
+            <span
+              data-testid="local-save-indicator"
+              className="hidden 2xl:inline-flex items-center gap-1 font-mono-tech text-[9px] text-emerald-400/90"
+            >
+              <Check size={10} />
+              <span>{labels.savedLocally}</span>
+            </span>
+          )}
+
           {snapshotsOpen && (
             <div
               data-testid="snapshots-popover"
-              className="absolute left-0 top-9 w-72 rounded-xl border p-2.5 shadow-2xl z-50 space-y-2"
+              className="absolute left-0 top-9 w-76 rounded-xl border p-2.5 shadow-2xl z-50 space-y-2.5"
               style={{
                 backgroundColor: 'var(--studio-surface)',
                 borderColor: 'var(--studio-border-strong)',
               }}
             >
+              {/* Local Project File Operations */}
+              <div className="space-y-1.5 pb-2 border-b" style={{ borderColor: 'var(--studio-border)' }}>
+                <div className="flex items-center justify-between font-mono-tech text-[9px] uppercase tracking-wider" style={{ color: 'var(--studio-text-muted)' }}>
+                  <span>Project File</span>
+                  <span className="text-emerald-400">Auto-saved</span>
+                </div>
+                <div className="grid grid-cols-2 gap-1.5">
+                  <button
+                    type="button"
+                    data-testid="btn-save-atelier-file"
+                    onClick={() => {
+                      onExportProjectFile();
+                      setSnapshotsOpen(false);
+                    }}
+                    className="h-7 px-2 rounded-lg border text-[10px] font-semibold flex items-center justify-center gap-1.5 hover:bg-white/5 cursor-pointer"
+                    style={{
+                      backgroundColor: 'var(--studio-surface-2)',
+                      borderColor: 'var(--studio-border-strong)',
+                      color: 'var(--studio-text)',
+                    }}
+                  >
+                    <Save size={11} style={{ color: 'var(--studio-cyan)' }} />
+                    <span>Save .atelier.json</span>
+                  </button>
+                  <button
+                    type="button"
+                    data-testid="btn-open-atelier-file"
+                    onClick={() => {
+                      projectFileInputRef.current?.click();
+                      setSnapshotsOpen(false);
+                    }}
+                    className="h-7 px-2 rounded-lg border text-[10px] font-semibold flex items-center justify-center gap-1.5 hover:bg-white/5 cursor-pointer"
+                    style={{
+                      backgroundColor: 'var(--studio-surface-2)',
+                      borderColor: 'var(--studio-border-strong)',
+                      color: 'var(--studio-text)',
+                    }}
+                  >
+                    <FolderOpen size={11} style={{ color: 'var(--studio-accent)' }} />
+                    <span>Open File</span>
+                  </button>
+                </div>
+                <button
+                  type="button"
+                  data-testid="btn-reset-workspace"
+                  onClick={() => {
+                    onResetWorkspace();
+                    setSnapshotsOpen(false);
+                  }}
+                  className="w-full h-6 rounded-md border text-[10px] font-mono-tech flex items-center justify-center gap-1 hover:bg-rose-500/10 hover:text-rose-300 cursor-pointer"
+                  style={{
+                    borderColor: 'var(--studio-border)',
+                    color: 'var(--studio-text-muted)',
+                  }}
+                >
+                  <RefreshCw size={10} />
+                  <span>Reset Workspace to Default</span>
+                </button>
+              </div>
+
+              {/* Named Version Milestones */}
               <div className="flex items-center justify-between">
                 <span className="font-mono-tech text-[10px] uppercase tracking-wider" style={{ color: 'var(--studio-text-muted)' }}>
                   Version Milestones
@@ -326,7 +423,7 @@ export function TopBar({
                   data-testid="snapshot-label-input"
                   value={snapshotDraft}
                   onChange={(e) => setSnapshotDraft(e.target.value)}
-                  placeholder="Milestone name (e.g. v2.1 Hero)..."
+                  placeholder="Milestone name..."
                   className="flex-1 h-7 px-2 rounded-md border text-[11px] outline-none"
                   style={{
                     backgroundColor: 'var(--studio-surface-2)',
@@ -343,7 +440,7 @@ export function TopBar({
                   Save
                 </button>
               </form>
-              <div className="max-h-48 overflow-y-auto studio-scroll space-y-1">
+              <div className="max-h-40 overflow-y-auto studio-scroll space-y-1">
                 {snapshots.map((snap) => (
                   <div
                     key={snap.id}
@@ -383,7 +480,7 @@ export function TopBar({
         </div>
       </div>
 
-      {/* Center: 3-Mode Switcher (DESIGN | PROTOTYPE | DEV MODE) + Present + Zoom */}
+      {/* Center: 3-Mode Switcher + Present + Zoom */}
       <div className="flex items-center gap-1.5">
         <div
           className="h-8 p-0.5 rounded-lg border flex items-center gap-0.5"
@@ -410,7 +507,7 @@ export function TopBar({
             type="button"
             data-testid="mode-prototype"
             onClick={() => onSetUiMode('prototype')}
-            title="Prototype & Motion Mode (Shift+2)"
+            title="Prototype & Multi-Screen Flows (Shift+2)"
             className="h-full px-2 rounded-md text-[10px] font-mono-tech font-semibold tracking-wider flex items-center gap-1 transition-all cursor-pointer"
             style={{
               backgroundColor: uiMode === 'prototype' ? '#059669' : 'transparent',
@@ -436,12 +533,11 @@ export function TopBar({
           </button>
         </div>
 
-        {/* Present Interactive Prototype CTA */}
         <button
           type="button"
           data-testid="btn-present"
           onClick={onOpenPrototypePlayer}
-          title="Launch Fullscreen Interactive Prototype Player"
+          title="Launch Fullscreen Interactive Multi-Screen Prototype"
           className="h-8 px-2.5 rounded-lg border text-[11px] font-semibold flex items-center gap-1.5 transition-all cursor-pointer shrink-0"
           style={{
             background:
@@ -454,7 +550,6 @@ export function TopBar({
           <span className="hidden sm:inline">{labels.presentBtn}</span>
         </button>
 
-        {/* Zoom Controls */}
         <div
           className="hidden xl:flex items-center h-8 rounded-lg border px-1 gap-0.5"
           style={{
@@ -493,7 +588,7 @@ export function TopBar({
           <button
             type="button"
             onClick={onFitToScreen}
-            title="Fit to Screen (Shift+0)"
+            title="Fit All Artboards (Shift+0)"
             className="px-1 h-6 rounded text-[10px] font-medium flex items-center gap-1 cursor-pointer hover:bg-white/5"
             style={{ color: 'var(--studio-text-secondary)' }}
           >
@@ -509,38 +604,8 @@ export function TopBar({
           type="button"
           data-testid="btn-co-designer"
           onClick={onToggleCoDesigner}
-          title={`Yjs CRDT Room (${crdtRevisions} ops) — Click to toggle live Co-Designer`}
-          className="hidden 2xl:flex items-center gap-1.5 h-8 px-2 rounded-lg border text-[11px] font-medium transition-colors cursor-pointer"
-          style={{
-            backgroundColor: coDesignerActive
-              ? 'rgba(6, 182, 212, 0.14)'
-              : 'var(--studio-surface-2)',
-            borderColor: coDesignerActive
-              ? 'rgba(6, 182, 212, 0.5)'
-              : 'var(--studio-border)',
-            color: coDesignerActive ? 'var(--studio-cyan)' : 'var(--studio-text-secondary)',
-          }}
-        >
-          <div className="flex items-center -space-x-1.5">
-            <span className="w-5 h-5 rounded-full bg-indigo-500 text-white font-mono-tech text-[9px] font-bold flex items-center justify-center ring-1 ring-[#0A0B0E]">
-              TV
-            </span>
-            {coDesignerActive && (
-              <span className="w-5 h-5 rounded-full bg-cyan-500 text-slate-950 font-mono-tech text-[9px] font-bold flex items-center justify-center ring-1 ring-[#0A0B0E]">
-                LN
-              </span>
-            )}
-          </div>
-          <Users size={12} strokeWidth={1.5} />
-          <span>{coDesignerActive ? labels.coDesignerLive : labels.simulateCoDesigner}</span>
-        </button>
-
-        <button
-          type="button"
-          data-testid="btn-co-designer-compact"
-          onClick={onToggleCoDesigner}
           title={`Yjs CRDT (${crdtRevisions} ops) — Simulate Co-Designer`}
-          className="2xl:hidden w-8 h-8 rounded-lg border flex items-center justify-center transition-colors cursor-pointer"
+          className="w-8 h-8 rounded-lg border flex items-center justify-center transition-colors cursor-pointer"
           style={{
             backgroundColor: coDesignerActive
               ? 'rgba(6, 182, 212, 0.14)'

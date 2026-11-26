@@ -5,17 +5,58 @@ import type {
   PathPoint,
 } from '../types/canvas';
 import { normalizePathPoints } from './bezier';
+import { DEFAULT_IMAGE_FILTER, STUDIO_PHOTOS } from './media';
 
 let counter = 1;
+
+export function createImageNode(
+  imageSrc: string,
+  name: string,
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+  tokens: DesignTokens,
+  artboardId?: string,
+): CanvasNode {
+  const id = `node-image-${Date.now().toString(36)}-${counter++}`;
+  return {
+    id,
+    artboardId,
+    name,
+    type: 'image',
+    x: Math.round(x),
+    y: Math.round(y),
+    width: Math.max(40, Math.round(width)),
+    height: Math.max(40, Math.round(height)),
+    rotation: 0,
+    radius: tokens.radiusBase,
+    opacity: 1,
+    fill: { kind: 'solid', color: tokens.surfaceCard },
+    strokeColor: tokens.borderSubtle,
+    strokeWidth: 1,
+    blur: 0,
+    shadow: 'elevated',
+    blendMode: 'normal',
+    locked: false,
+    visible: true,
+    imageSrc,
+    objectFit: 'cover',
+    imageFilter: { ...DEFAULT_IMAGE_FILTER },
+    tokenBinding: { stroke: 'borderSubtle', radius: 'radiusBase' },
+  };
+}
 
 export function createPathNodeFromPoints(
   rawPoints: PathPoint[],
   tokens: DesignTokens,
+  artboardId?: string,
 ): CanvasNode {
   const normalized = normalizePathPoints(rawPoints, 10);
   const id = `node-path-${Date.now().toString(36)}-${counter++}`;
   return {
     id,
+    artboardId,
     name: `Vector Curve ${counter}`,
     type: 'path',
     x: normalized.x,
@@ -52,9 +93,24 @@ export function createNodeFromTool(
   width: number,
   height: number,
   tokens: DesignTokens,
+  artboardId?: string,
 ): CanvasNode {
+  if (type === 'image') {
+    const photo = STUDIO_PHOTOS[counter % STUDIO_PHOTOS.length];
+    return createImageNode(
+      photo.src,
+      photo.title,
+      x,
+      y,
+      width || photo.defaultW,
+      height || photo.defaultH,
+      tokens,
+      artboardId,
+    );
+  }
+
   const id = `node-${type}-${Date.now().toString(36)}-${counter++}`;
-  const defaultSizes: Record<Exclude<NodeType, 'path'>, { w: number; h: number }> = {
+  const defaultSizes: Record<Exclude<NodeType, 'path' | 'image'>, { w: number; h: number }> = {
     frame: { w: 280, h: 180 },
     rect: { w: 180, h: 120 },
     ellipse: { w: 130, h: 130 },
@@ -69,6 +125,7 @@ export function createNodeFromTool(
 
   const common = {
     id,
+    artboardId,
     x: Math.round(x),
     y: Math.round(y),
     width: w,

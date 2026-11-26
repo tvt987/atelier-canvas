@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import {
   CheckCircle2,
+  ChevronRight,
   Laptop,
   Monitor,
   Palette,
@@ -15,6 +16,7 @@ import type {
   DeviceFrameMode,
   DocumentState,
   PrototypeConfig,
+  ScreenTransition,
 } from '../types/canvas';
 import {
   BRAND_TOKEN_THEMES,
@@ -22,6 +24,8 @@ import {
   resolveNodeStyle,
 } from '../engines/tokens';
 import { buildSvgPathData } from '../engines/bezier';
+import { buildImageFilterCss } from '../engines/media';
+import { getDocumentArtboards, getNodesForArtboard } from '../engines/projectStorage';
 
 interface PrototypePlayerModalProps {
   open: boolean;
@@ -44,10 +48,22 @@ export function PrototypePlayerModal({
   onUpdateTokens,
   onSwitchTemplate,
 }: PrototypePlayerModalProps) {
+  const artboards = getDocumentArtboards(doc);
+  const [activeArtboardId, setActiveArtboardId] = useState(doc.artboard.id);
+  const [activeTransition, setActiveTransition] =
+    useState<ScreenTransition>('slide-left');
   const [device, setDevice] = useState<DeviceFrameMode>('studio');
   const [replayKey, setReplayKey] = useState(1);
   const [toastMsg, setToastMsg] = useState<string | null>(null);
   const [pulsingId, setPulsingId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (open) {
+      setActiveArtboardId(doc.artboard.id);
+      setReplayKey((k) => k + 1);
+      setToastMsg(null);
+    }
+  }, [open, doc.artboard.id]);
 
   useEffect(() => {
     if (!open) return;
@@ -61,20 +77,42 @@ export function PrototypePlayerModal({
 
   if (!open) return null;
 
-  const artboardBg = resolveArtboardBackground(doc.artboard, doc.tokens);
+  const activeBoard =
+    artboards.find((a) => a.id === activeArtboardId) ?? doc.artboard;
+  const boardNodes = getNodesForArtboard(doc, activeBoard.id).filter(
+    (n) => n.visible,
+  );
+  const artboardBg = resolveArtboardBackground(activeBoard, doc.tokens);
 
   const triggerToast = (msg: string) => {
     setToastMsg(msg);
     window.setTimeout(() => {
       setToastMsg((prev) => (prev === msg ? null : prev));
-    }, 3000);
+    }, 3200);
+  };
+
+  const navigateToScreen = (
+    targetId: string,
+    transition: ScreenTransition = 'slide-left',
+  ) => {
+    const exists = artboards.find((a) => a.id === targetId);
+    if (!exists) return;
+    setActiveTransition(transition);
+    setActiveArtboardId(exists.id);
+    setReplayKey((k) => k + 1);
+    triggerToast(`Navigated -> ${exists.name} (${transition})`);
   };
 
   const handleNodeClick = (node: CanvasNode) => {
     const proto = node.prototype;
     if (!proto || proto.clickAction === 'none') return;
 
-    if (proto.clickAction === 'toast') {
+    if (proto.clickAction === 'navigate_artboard' && proto.targetArtboardId) {
+      navigateToScreen(
+        proto.targetArtboardId,
+        proto.transition ?? 'slide-left',
+      );
+    } else if (proto.clickAction === 'toast') {
       triggerToast(proto.clickPayload || `${node.name} interaction executed`);
     } else if (proto.clickAction === 'pulse-target') {
       const targetId = proto.clickPayload || node.id;
@@ -83,36 +121,46 @@ export function PrototypePlayerModal({
       window.setTimeout(() => setPulsingId(null), 1900);
     } else if (proto.clickAction === 'toggle-theme') {
       const idx = BRAND_TOKEN_THEMES.findIndex((t) => t.id === doc.tokens.id);
-      const nextTheme = BRAND_TOKEN_THEMES[(idx + 1) % BRAND_TOKEN_THEMES.length];
+      const nextTheme =
+        BRAND_TOKEN_THEMES[(idx + 1) % BRAND_TOKEN_THEMES.length];
       onUpdateTokens(nextTheme);
       triggerToast(`Morphed live tokens -> ${nextTheme.name}`);
     } else if (proto.clickAction === 'switch-template') {
       const targetTemplate = proto.clickPayload || 'ai-saas-hero';
       onSwitchTemplate(targetTemplate);
       setReplayKey((k) => k + 1);
-      triggerToast(`Navigated flow -> ${targetTemplate}`);
+      triggerToast(`Switched template -> ${targetTemplate}`);
     }
   };
 
   const scale =
     device === 'iphone'
-      ? Math.min(340 / doc.artboard.width, 620 / doc.artboard.height)
+      ? Math.min(340 / activeBoard.width, 600 / activeBoard.height, 0.92)
       : device === 'macbook'
-        ? Math.min(820 / doc.artboard.width, 500 / doc.artboard.height, 0.94)
-        : Math.min(920 / doc.artboard.width, 600 / doc.artboard.height, 1);
+        ? Math.min(820 / activeBoard.width, 500 / activeBoard.height, 0.94)
+        : Math.min(920 / activeBoard.width, 600 / activeBoard.height, 1);
 
-  const scaledW = Math.round(doc.artboard.width * scale);
-  const scaledH = Math.round(doc.artboard.height * scale);
+  const scaledW = Math.round(activeBoard.width * scale);
+  const scaledH = Math.round(activeBoard.height * scale);
+
+  const screenEntranceCss =
+    activeTransition === 'slide-left'
+      ? 'atelier-slide-left 360ms cubic-bezier(0.16, 1, 0.3, 1) both'
+      : activeTransition === 'spring-scale'
+        ? 'atelier-spring-scale 400ms cubic-bezier(0.34, 1.56, 0.64, 1) both'
+        : 'atelier-fade-up 300ms ease-out both';
 
   const renderArtboard = () => (
     <div
-      key={replayKey}
+      key={`${activeBoard.id}-${replayKey}`}
+      data-testid={`proto-active-screen-${activeBoard.id}`}
       className="relative"
       style={{
         width: scaledW,
         height: scaledH,
         overflow: 'clip',
-        borderRadius: Math.round(doc.artboard.radius * scale),
+        borderRadius: Math.round(activeBoard.radius * scale),
+        animation: screenEntranceCss,
         boxShadow:
           device === 'studio'
             ? '0 32px 110px rgba(0, 0, 0, 0.65), 0 0 0 1px rgba(255,255,255,0.1)'
@@ -122,147 +170,181 @@ export function PrototypePlayerModal({
       <div
         className="absolute top-0 left-0 overflow-hidden"
         style={{
-          width: doc.artboard.width,
-          height: doc.artboard.height,
-          borderRadius: doc.artboard.radius,
+          width: activeBoard.width,
+          height: activeBoard.height,
+          borderRadius: activeBoard.radius,
           background: artboardBg.cssBackground,
           transform: `scale(${scale})`,
           transformOrigin: 'top left',
         }}
       >
-        {doc.nodes
-          .filter((n) => n.visible)
-          .map((node) => {
-            const style = resolveNodeStyle(node, doc.tokens);
-            const proto = node.prototype;
-            const hoverClass =
-              proto && proto.hoverEffect !== 'none'
-                ? `proto-hover-${proto.hoverEffect}`
-                : '';
-            const isInteractive = Boolean(
-              proto && proto.clickAction !== 'none',
-            );
-            const isPulsing = pulsingId === node.id;
+        {boardNodes.map((node) => {
+          const style = resolveNodeStyle(node, doc.tokens);
+          const proto = node.prototype;
+          const hoverClass =
+            proto && proto.hoverEffect !== 'none'
+              ? `proto-hover-${proto.hoverEffect}`
+              : '';
+          const isInteractive = Boolean(proto && proto.clickAction !== 'none');
+          const isPulsing = pulsingId === node.id;
 
-            const animName =
-              proto && proto.entrance !== 'none'
-                ? `atelier-${proto.entrance}`
-                : undefined;
-            const isLooping =
-              proto?.entrance === 'float-levitate' ||
-              proto?.entrance === 'shimmer-glow';
+          const animName =
+            proto && proto.entrance !== 'none'
+              ? `atelier-${proto.entrance}`
+              : undefined;
+          const isLooping =
+            proto?.entrance === 'float-levitate' ||
+            proto?.entrance === 'shimmer-glow';
 
-            const animCss =
-              animName && proto
-                ? `${animName} ${proto.durationMs}ms ${easingToCss(proto.easing)} ${proto.delayMs}ms ${isLooping ? 'infinite' : 'both'}`
-                : undefined;
+          const animCss =
+            animName && proto
+              ? `${animName} ${proto.durationMs}ms ${easingToCss(proto.easing)} ${proto.delayMs}ms ${isLooping ? 'infinite' : 'both'}`
+              : undefined;
 
-            if (node.type === 'path' && node.pathData) {
-              const d = buildSvgPathData(
-                node.pathData.points,
-                node.pathData.smooth !== false,
-                Boolean(node.pathData.closed),
-              );
-              const dash =
-                node.pathData.dashStyle === 'dashed'
-                  ? '8 6'
-                  : node.pathData.dashStyle === 'dotted'
-                    ? '2 6'
-                    : undefined;
-              return (
-                <svg
-                  key={node.id}
-                  className={`absolute overflow-visible ${hoverClass}`}
-                  style={{
-                    left: node.x - doc.artboard.x,
-                    top: node.y - doc.artboard.y,
-                    width: node.width,
-                    height: node.height,
-                    opacity: node.opacity,
-                    animation: animCss,
-                    filter: node.pathData.glow
-                      ? `drop-shadow(0 0 8px ${style.strokeColor})`
-                      : undefined,
-                  }}
-                  viewBox={`0 0 ${node.width} ${node.height}`}
-                  fill="none"
-                >
-                  <path
-                    d={d}
-                    stroke={style.strokeColor}
-                    strokeWidth={Math.max(1.5, node.strokeWidth || 2.5)}
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeDasharray={dash}
-                  />
-                </svg>
-              );
-            }
-
+          if (node.type === 'image') {
+            const filterCss = buildImageFilterCss(node.imageFilter);
             return (
               <div
                 key={node.id}
                 data-testid={`proto-node-${node.id}`}
                 onClick={() => handleNodeClick(node)}
-                className={`absolute ${hoverClass} ${isPulsing ? 'proto-pulsing' : ''}`}
+                className={`absolute overflow-hidden ${hoverClass} ${isPulsing ? 'proto-pulsing' : ''}`}
                 style={{
-                  left: node.x - doc.artboard.x,
-                  top: node.y - doc.artboard.y,
+                  left: node.x - activeBoard.x,
+                  top: node.y - activeBoard.y,
                   width: node.width,
                   height: node.height,
-                  transform:
-                    node.rotation !== 0 ? `rotate(${node.rotation}deg)` : undefined,
                   borderRadius: style.radius,
                   opacity: node.opacity,
-                  background:
-                    node.type === 'text' ? 'transparent' : style.cssBackground,
                   border:
                     node.strokeWidth > 0
                       ? `${node.strokeWidth}px solid ${style.strokeColor}`
                       : undefined,
-                  backdropFilter: node.blur > 0 ? `blur(${node.blur}px)` : undefined,
-                  WebkitBackdropFilter:
-                    node.blur > 0 ? `blur(${node.blur}px)` : undefined,
                   boxShadow:
                     style.boxShadow !== 'none' ? style.boxShadow : undefined,
-                  mixBlendMode: node.blendMode,
                   animation: animCss,
                   cursor: isInteractive ? 'pointer' : 'default',
-                  display:
-                    node.type === 'button' || node.type === 'text'
-                      ? 'flex'
-                      : undefined,
-                  alignItems: node.type === 'button' ? 'center' : 'flex-start',
-                  justifyContent:
-                    node.type === 'button'
-                      ? 'center'
-                      : node.textAlign === 'center'
-                        ? 'center'
-                        : node.textAlign === 'right'
-                          ? 'flex-end'
-                          : 'flex-start',
                 }}
               >
-                {(node.type === 'text' || node.type === 'button') && (
-                  <span
-                    className="w-full"
-                    style={{
-                      color: style.textColor,
-                      fontFamily: node.fontFamily ?? 'Inter',
-                      fontWeight: node.fontWeight ?? 500,
-                      fontSize: node.fontSize ?? 14,
-                      letterSpacing: node.letterSpacing ?? 0,
-                      lineHeight: node.lineHeight ?? 1.25,
-                      textAlign: node.textAlign ?? 'left',
-                      whiteSpace: 'pre-wrap',
-                    }}
-                  >
-                    {node.text}
-                  </span>
-                )}
+                <img
+                  src={node.imageSrc}
+                  alt={node.name}
+                  className="w-full h-full pointer-events-none"
+                  style={{
+                    objectFit: node.objectFit ?? 'cover',
+                    filter: filterCss,
+                  }}
+                />
               </div>
             );
-          })}
+          }
+
+          if (node.type === 'path' && node.pathData) {
+            const d = buildSvgPathData(
+              node.pathData.points,
+              node.pathData.smooth !== false,
+              Boolean(node.pathData.closed),
+            );
+            const dash =
+              node.pathData.dashStyle === 'dashed'
+                ? '8 6'
+                : node.pathData.dashStyle === 'dotted'
+                  ? '2 6'
+                  : undefined;
+            return (
+              <svg
+                key={node.id}
+                className={`absolute overflow-visible ${hoverClass}`}
+                style={{
+                  left: node.x - activeBoard.x,
+                  top: node.y - activeBoard.y,
+                  width: node.width,
+                  height: node.height,
+                  opacity: node.opacity,
+                  animation: animCss,
+                  filter: node.pathData.glow
+                    ? `drop-shadow(0 0 8px ${style.strokeColor})`
+                    : undefined,
+                }}
+                viewBox={`0 0 ${node.width} ${node.height}`}
+                fill="none"
+              >
+                <path
+                  d={d}
+                  stroke={style.strokeColor}
+                  strokeWidth={Math.max(1.5, node.strokeWidth || 2.5)}
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeDasharray={dash}
+                />
+              </svg>
+            );
+          }
+
+          return (
+            <div
+              key={node.id}
+              data-testid={`proto-node-${node.id}`}
+              onClick={() => handleNodeClick(node)}
+              className={`absolute ${hoverClass} ${isPulsing ? 'proto-pulsing' : ''}`}
+              style={{
+                left: node.x - activeBoard.x,
+                top: node.y - activeBoard.y,
+                width: node.width,
+                height: node.height,
+                transform:
+                  node.rotation !== 0 ? `rotate(${node.rotation}deg)` : undefined,
+                borderRadius: style.radius,
+                opacity: node.opacity,
+                background:
+                  node.type === 'text' ? 'transparent' : style.cssBackground,
+                border:
+                  node.strokeWidth > 0
+                    ? `${node.strokeWidth}px solid ${style.strokeColor}`
+                    : undefined,
+                backdropFilter: node.blur > 0 ? `blur(${node.blur}px)` : undefined,
+                WebkitBackdropFilter:
+                  node.blur > 0 ? `blur(${node.blur}px)` : undefined,
+                boxShadow:
+                  style.boxShadow !== 'none' ? style.boxShadow : undefined,
+                mixBlendMode: node.blendMode,
+                animation: animCss,
+                cursor: isInteractive ? 'pointer' : 'default',
+                display:
+                  node.type === 'button' || node.type === 'text'
+                    ? 'flex'
+                    : undefined,
+                alignItems: node.type === 'button' ? 'center' : 'flex-start',
+                justifyContent:
+                  node.type === 'button'
+                    ? 'center'
+                    : node.textAlign === 'center'
+                      ? 'center'
+                      : node.textAlign === 'right'
+                        ? 'flex-end'
+                        : 'flex-start',
+              }}
+            >
+              {(node.type === 'text' || node.type === 'button') && (
+                <span
+                  className="w-full"
+                  style={{
+                    color: style.textColor,
+                    fontFamily: node.fontFamily ?? 'Inter',
+                    fontWeight: node.fontWeight ?? 500,
+                    fontSize: node.fontSize ?? 14,
+                    letterSpacing: node.letterSpacing ?? 0,
+                    lineHeight: node.lineHeight ?? 1.25,
+                    textAlign: node.textAlign ?? 'left',
+                    whiteSpace: 'pre-wrap',
+                  }}
+                >
+                  {node.text}
+                </span>
+              )}
+            </div>
+          );
+        })}
       </div>
     </div>
   );
@@ -276,20 +358,45 @@ export function PrototypePlayerModal({
           'radial-gradient(circle at 50% 0%, rgba(99,102,241,0.16), transparent 55%), radial-gradient(circle at 80% 90%, rgba(6,182,212,0.12), transparent 50%)',
       }}
     >
-      {/* Top Presenter Bar */}
+      {/* Top Presenter Bar with Multi-Screen Breadcrumb */}
       <header className="h-14 px-5 border-b border-white/10 flex items-center justify-between gap-4 shrink-0 bg-[#0B0D13]/85 backdrop-blur-md">
-        <div className="flex items-center gap-3 min-w-0">
-          <div className="flex items-center gap-1.5 px-2 py-1 rounded-full bg-emerald-500/15 border border-emerald-500/40 text-emerald-300 font-mono-tech text-[10px] font-semibold">
+        <div className="flex items-center gap-2.5 min-w-0">
+          <div className="flex items-center gap-1.5 px-2 py-1 rounded-full bg-emerald-500/15 border border-emerald-500/40 text-emerald-300 font-mono-tech text-[10px] font-semibold shrink-0">
             <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-            <span>LIVE PROTOTYPE</span>
+            <span>LIVE FLOW</span>
           </div>
-          <span className="font-display font-semibold text-sm truncate">
-            {doc.artboard.name}
-          </span>
+
+          <div
+            data-testid="proto-screen-breadcrumbs"
+            className="flex items-center gap-1 overflow-hidden"
+          >
+            {artboards.map((board, idx) => {
+              const isCurrent = board.id === activeBoard.id;
+              return (
+                <div key={board.id} className="flex items-center gap-1">
+                  {idx > 0 && <ChevronRight size={12} className="text-slate-600" />}
+                  <button
+                    type="button"
+                    data-testid={`proto-crumb-${board.id}`}
+                    onClick={() => navigateToScreen(board.id, 'dissolve')}
+                    className="px-2 py-1 rounded-md text-xs font-medium transition-colors cursor-pointer whitespace-nowrap"
+                    style={{
+                      backgroundColor: isCurrent
+                        ? 'rgba(99, 102, 241, 0.22)'
+                        : 'transparent',
+                      color: isCurrent ? '#E0E7FF' : '#94A3B8',
+                    }}
+                  >
+                    0{idx + 1} · {board.name}
+                  </button>
+                </div>
+              );
+            })}
+          </div>
         </div>
 
         {/* Device Bezel Switcher */}
-        <div className="flex items-center gap-1 p-1 rounded-xl bg-white/5 border border-white/10">
+        <div className="flex items-center gap-1 p-1 rounded-xl bg-white/5 border border-white/10 shrink-0">
           {(
             [
               ['studio', 'Floating Studio', Monitor],
@@ -304,8 +411,7 @@ export function PrototypePlayerModal({
               onClick={() => setDevice(id)}
               className="h-7 px-2.5 rounded-lg text-[11px] font-medium flex items-center gap-1.5 transition-colors cursor-pointer"
               style={{
-                backgroundColor:
-                  device === id ? '#6366F1' : 'transparent',
+                backgroundColor: device === id ? '#6366F1' : 'transparent',
                 color: device === id ? '#FFFFFF' : '#94A3B8',
               }}
             >
@@ -315,9 +421,8 @@ export function PrototypePlayerModal({
           ))}
         </div>
 
-        {/* Right Presenter Controls */}
-        <div className="flex items-center gap-2">
-          {/* Quick Brand Theme Switch */}
+        {/* Right Controls */}
+        <div className="flex items-center gap-2 shrink-0">
           <div className="hidden lg:flex items-center gap-1 px-2 py-1 rounded-lg bg-white/5 border border-white/10">
             <Palette size={12} className="text-slate-400 mr-1" />
             {BRAND_TOKEN_THEMES.map((theme) => (
@@ -382,7 +487,7 @@ export function PrototypePlayerModal({
             <div className="w-24 h-5 rounded-full bg-black flex items-center justify-end pr-2 border border-white/10">
               <span className="w-2 h-2 rounded-full bg-indigo-950 border border-indigo-500/40" />
             </div>
-            <div className="rounded-[26px] overflow-hidden bg-black/40 py-14 px-2 flex items-center justify-center">
+            <div className="rounded-[26px] overflow-hidden bg-black/40 py-6 px-2 flex items-center justify-center">
               {renderArtboard()}
             </div>
             <div className="w-28 h-1 rounded-full bg-slate-500/60" />
@@ -392,7 +497,7 @@ export function PrototypePlayerModal({
         )}
       </div>
 
-      {/* Bottom Interactive Hint & Live Toast */}
+      {/* Bottom Toast / Interactive Hint */}
       <footer className="h-12 px-6 flex items-center justify-center relative shrink-0">
         {toastMsg ? (
           <div
@@ -406,7 +511,7 @@ export function PrototypePlayerModal({
           <div className="font-mono-tech text-[11px] text-slate-400 flex items-center gap-2">
             <Zap size={12} className="text-emerald-400" />
             <span>
-              Click interactive elements (e.g. Instant Transfer, Ledger Specs, Yield Pill) to test live flows · Press R to replay
+              Click Instant Transfer to navigate live to Checkout Screen · Press R to replay
             </span>
           </div>
         )}

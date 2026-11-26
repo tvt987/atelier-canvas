@@ -8,7 +8,8 @@ export type ToolType =
   | 'text'
   | 'button'
   | 'glass'
-  | 'line';
+  | 'line'
+  | 'image';
 
 export type NodeType =
   | 'frame'
@@ -18,7 +19,8 @@ export type NodeType =
   | 'button'
   | 'glass'
   | 'line'
-  | 'path';
+  | 'path'
+  | 'image';
 
 export type FillKind = 'solid' | 'gradient' | 'none';
 
@@ -73,6 +75,14 @@ export interface PathConfig {
   glow?: boolean;
 }
 
+export interface ImageFilterConfig {
+  brightness: number;
+  contrast: number;
+  saturate: number;
+  grayscale: number;
+  blur: number;
+}
+
 export interface AutoLayoutConfig {
   enabled: boolean;
   direction: 'row' | 'column';
@@ -92,12 +102,15 @@ export type EntranceAnimation =
 
 export type EasingPreset = 'spring' | 'expo-out' | 'smooth';
 export type HoverEffect = 'none' | 'lift-glow' | 'scale' | 'glass-tilt';
+export type ScreenTransition = 'slide-left' | 'dissolve' | 'spring-scale';
+
 export type ClickAction =
   | 'none'
   | 'toast'
   | 'pulse-target'
   | 'switch-template'
-  | 'toggle-theme';
+  | 'toggle-theme'
+  | 'navigate_artboard';
 
 export interface PrototypeConfig {
   entrance: EntranceAnimation;
@@ -107,10 +120,13 @@ export interface PrototypeConfig {
   hoverEffect: HoverEffect;
   clickAction: ClickAction;
   clickPayload?: string;
+  targetArtboardId?: string;
+  transition?: ScreenTransition;
 }
 
 export interface CanvasNode {
   id: string;
+  artboardId?: string;
   name: string;
   type: NodeType;
   x: number;
@@ -140,6 +156,9 @@ export interface CanvasNode {
   pathData?: PathConfig;
   autoLayout?: AutoLayoutConfig;
   prototype?: PrototypeConfig;
+  imageSrc?: string;
+  objectFit?: 'cover' | 'contain';
+  imageFilter?: ImageFilterConfig;
 }
 
 export interface Artboard {
@@ -176,8 +195,16 @@ export interface DesignTokens {
 export interface DocumentState {
   templateId: string;
   artboard: Artboard;
+  artboards?: Artboard[];
   nodes: CanvasNode[];
   tokens: DesignTokens;
+}
+
+export interface AtelierProjectFile {
+  format: 'atelier-canvas-project';
+  version: '3.0';
+  exportedAt: string;
+  document: DocumentState;
 }
 
 export interface DesignSnapshot {

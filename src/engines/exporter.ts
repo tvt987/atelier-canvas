@@ -1,10 +1,12 @@
-import type { CanvasNode, DocumentState, FillConfig } from '../types/canvas';
+import type { Artboard, CanvasNode, DocumentState, FillConfig } from '../types/canvas';
 import {
   hexToRgba,
   resolveArtboardBackground,
   resolveNodeStyle,
 } from './tokens';
 import { buildSvgPathData } from './bezier';
+import { buildImageFilterCss } from './media';
+import { getNodesForArtboard } from './projectStorage';
 
 function escapeXml(value: string): string {
   return value
@@ -85,16 +87,20 @@ function wrapTextLines(
 
 function renderNodeSvg(
   node: CanvasNode,
+  artboard: Artboard,
   doc: DocumentState,
   defs: string[],
 ): string {
   const style = resolveNodeStyle(node, doc.tokens);
   const isGlass = node.type === 'glass' || node.blur > 0;
-  const gradId = `grad-${node.id.replace(/[^a-zA-Z0-9-_]/g, '')}`;
+  const safeId = node.id.replace(/[^a-zA-Z0-9-_]/g, '');
+  const gradId = `grad-${safeId}`;
   const fillPaint = registerGradientDef(defs, gradId, style.fill, isGlass);
 
-  const cx = node.x + node.width / 2;
-  const cy = node.y + node.height / 2;
+  const relX = node.x - artboard.x;
+  const relY = node.y - artboard.y;
+  const cx = relX + node.width / 2;
+  const cy = relY + node.height / 2;
   const transformAttr =
     node.rotation !== 0
       ? ` transform="rotate(${node.rotation} ${cx.toFixed(1)} ${cy.toFixed(1)})"`
@@ -108,10 +114,33 @@ function renderNodeSvg(
       ? ` stroke="${escapeXml(style.strokeColor)}" stroke-width="${node.strokeWidth}"`
       : '';
 
+  if (node.type === 'image') {
+    const clipId = `clip-img-${safeId}`;
+    const rx = Math.min(style.radius, Math.min(node.width, node.height) / 2);
+    defs.push(
+      `    <clipPath id="${clipId}">`,
+      `      <rect x="${relX.toFixed(1)}" y="${relY.toFixed(1)}" width="${node.width.toFixed(1)}" height="${node.height.toFixed(1)}" rx="${rx}" />`,
+      `    </clipPath>`,
+    );
+    const par =
+      node.objectFit === 'contain' ? 'xMidYMid meet' : 'xMidYMid slice';
+    const cssFilter = buildImageFilterCss(node.imageFilter);
+    const imgStyleAttr = cssFilter ? ` style="filter:${escapeXml(cssFilter)}"` : '';
+    const borderRect =
+      node.strokeWidth > 0
+        ? `\n      <rect x="${relX.toFixed(1)}" y="${relY.toFixed(1)}" width="${node.width.toFixed(1)}" height="${node.height.toFixed(1)}" rx="${rx}" fill="none"${strokeAttr} />`
+        : '';
+    return [
+      `    <g${opacityAttr}${transformAttr}${filterAttr}>`,
+      `      <image href="${escapeXml(node.imageSrc ?? '')}" x="${relX.toFixed(1)}" y="${relY.toFixed(1)}" width="${node.width.toFixed(1)}" height="${node.height.toFixed(1)}" preserveAspectRatio="${par}" clip-path="url(#${clipId})"${imgStyleAttr} />${borderRect}`,
+      `    </g>`,
+    ].join('\n');
+  }
+
   if (node.type === 'path' && node.pathData) {
     const worldPts = node.pathData.points.map((pt) => ({
-      x: node.x + pt.x,
-      y: node.y + pt.y,
+      x: relX + pt.x,
+      y: relY + pt.y,
     }));
     const d = buildSvgPathData(
       worldPts,
@@ -138,12 +167,12 @@ function renderNodeSvg(
   }
 
   if (node.type === 'line') {
-    const x2 = node.x + node.width;
-    const y2 = node.y + node.height;
+    const x2 = relX + node.width;
+    const y2 = relY + node.height;
     if (node.height <= 4 || node.width <= 4) {
-      return `    <rect x="${node.x.toFixed(1)}" y="${node.y.toFixed(1)}" width="${Math.max(1, node.width).toFixed(1)}" height="${Math.max(1, node.height).toFixed(1)}" rx="${style.radius}" fill="${fillPaint}"${opacityAttr}${transformAttr} />`;
+      return `    <rect x="${relX.toFixed(1)}" y="${relY.toFixed(1)}" width="${Math.max(1, node.width).toFixed(1)}" height="${Math.max(1, node.height).toFixed(1)}" rx="${style.radius}" fill="${fillPaint}"${opacityAttr}${transformAttr} />`;
     }
-    return `    <line x1="${node.x.toFixed(1)}" y1="${node.y.toFixed(1)}" x2="${x2.toFixed(1)}" y2="${y2.toFixed(1)}" stroke="${fillPaint}" stroke-width="${Math.max(2, node.strokeWidth || 2)}" stroke-linecap="round"${opacityAttr}${transformAttr} />`;
+    return `    <line x1="${relX.toFixed(1)}" y1="${relY.toFixed(1)}" x2="${x2.toFixed(1)}" y2="${y2.toFixed(1)}" stroke="${fillPaint}" stroke-width="${Math.max(2, node.strokeWidth || 2)}" stroke-linecap="round"${opacityAttr}${transformAttr} />`;
   }
 
   if (node.type === 'text') {
@@ -158,11 +187,11 @@ function renderNodeSvg(
           : 'start';
     const textX =
       node.textAlign === 'center'
-        ? node.x + node.width / 2
+        ? relX + node.width / 2
         : node.textAlign === 'right'
-          ? node.x + node.width
-          : node.x;
-    const startY = node.y + fontSize;
+          ? relX + node.width
+          : relX;
+    const startY = relY + fontSize;
     const tspans = lines
       .map(
         (line, idx) =>
@@ -179,18 +208,22 @@ function renderNodeSvg(
     const textY = cy + fontSize * 0.35;
     return [
       `    <g${opacityAttr}${transformAttr}>`,
-      `      <rect x="${node.x.toFixed(1)}" y="${node.y.toFixed(1)}" width="${node.width.toFixed(1)}" height="${node.height.toFixed(1)}" rx="${rx}" fill="${fillPaint}"${strokeAttr}${filterAttr} />`,
+      `      <rect x="${relX.toFixed(1)}" y="${relY.toFixed(1)}" width="${node.width.toFixed(1)}" height="${node.height.toFixed(1)}" rx="${rx}" fill="${fillPaint}"${strokeAttr}${filterAttr} />`,
       `      <text x="${cx.toFixed(1)}" y="${textY.toFixed(1)}" text-anchor="middle" fill="${escapeXml(style.textColor)}" font-family="${escapeXml(node.fontFamily ?? 'Inter')}, sans-serif" font-size="${fontSize}" font-weight="${node.fontWeight ?? 600}" letter-spacing="${node.letterSpacing ?? 0}">${escapeXml(node.text ?? 'Button')}</text>`,
       `    </g>`,
     ].join('\n');
   }
 
   const rx = Math.min(style.radius, Math.min(node.width, node.height) / 2);
-  return `    <rect x="${node.x.toFixed(1)}" y="${node.y.toFixed(1)}" width="${node.width.toFixed(1)}" height="${node.height.toFixed(1)}" rx="${rx}" fill="${fillPaint}"${strokeAttr}${opacityAttr}${filterAttr}${transformAttr} />`;
+  return `    <rect x="${relX.toFixed(1)}" y="${relY.toFixed(1)}" width="${node.width.toFixed(1)}" height="${node.height.toFixed(1)}" rx="${rx}" fill="${fillPaint}"${strokeAttr}${opacityAttr}${filterAttr}${transformAttr} />`;
 }
 
-export function exportArtboardToSvg(doc: DocumentState): string {
-  const { artboard, tokens } = doc;
+export function exportArtboardToSvg(
+  doc: DocumentState,
+  targetArtboard?: Artboard,
+): string {
+  const artboard = targetArtboard ?? doc.artboard;
+  const { tokens } = doc;
   const bg = resolveArtboardBackground(artboard, tokens);
   const defs: string[] = [
     `    <clipPath id="artboard-clip">`,
@@ -215,9 +248,11 @@ export function exportArtboardToSvg(doc: DocumentState): string {
 
   const bgFill = registerGradientDef(defs, 'grad-artboard-bg', bg.fill, false);
 
-  const visibleNodes = doc.nodes.filter((n) => n.visible);
+  const visibleNodes = getNodesForArtboard(doc, artboard.id).filter(
+    (n) => n.visible,
+  );
   const nodeMarkup = visibleNodes
-    .map((node) => renderNodeSvg(node, doc, defs))
+    .map((node) => renderNodeSvg(node, artboard, doc, defs))
     .join('\n');
 
   return `<?xml version="1.0" encoding="UTF-8"?>
@@ -236,34 +271,45 @@ ${nodeMarkup}
 export function exportNodeToSvg(node: CanvasNode, doc: DocumentState): string {
   const shiftedNode: CanvasNode = {
     ...node,
+    artboardId: 'single-node-export',
     x: 12,
     y: 12,
   };
+  const singleBoard: Artboard = {
+    id: 'single-node-export',
+    name: node.name,
+    x: 0,
+    y: 0,
+    width: Math.round(node.width + 24),
+    height: Math.round(node.height + 24),
+    radius: 0,
+    background: { kind: 'none', color: 'transparent' },
+  };
   const miniDoc: DocumentState = {
     ...doc,
-    artboard: {
-      ...doc.artboard,
-      x: 0,
-      y: 0,
-      width: Math.round(node.width + 24),
-      height: Math.round(node.height + 24),
-      radius: 0,
-      background: { kind: 'none', color: 'transparent' },
-      tokenBinding: undefined,
-    },
+    artboard: singleBoard,
+    artboards: [singleBoard],
     nodes: [shiftedNode],
   };
-  return exportArtboardToSvg(miniDoc);
+  return exportArtboardToSvg(miniDoc, singleBoard);
 }
 
-export function exportArtboardToStandaloneHtml(doc: DocumentState): string {
-  const bg = resolveArtboardBackground(doc.artboard, doc.tokens);
-  const visibleNodes = doc.nodes.filter((n) => n.visible);
+export function exportArtboardToStandaloneHtml(
+  doc: DocumentState,
+  targetArtboard?: Artboard,
+): string {
+  const artboard = targetArtboard ?? doc.artboard;
+  const bg = resolveArtboardBackground(artboard, doc.tokens);
+  const visibleNodes = getNodesForArtboard(doc, artboard.id).filter(
+    (n) => n.visible,
+  );
 
   const nodesHtml = visibleNodes
     .map((node) => {
       const style = resolveNodeStyle(node, doc.tokens);
       const proto = node.prototype;
+      const relX = node.x - artboard.x;
+      const relY = node.y - artboard.y;
       const hoverClass =
         proto && proto.hoverEffect !== 'none'
           ? ` hover-${proto.hoverEffect}`
@@ -283,6 +329,25 @@ export function exportArtboardToStandaloneHtml(doc: DocumentState): string {
           ? ` data-toast="${escapeXml(proto.clickPayload || `${node.name} triggered`)}"`
           : '';
 
+      if (node.type === 'image') {
+        const filterCss = buildImageFilterCss(node.imageFilter);
+        const imgStyle = [
+          `left:${relX}px`,
+          `top:${relY}px`,
+          `width:${node.width}px`,
+          `height:${node.height}px`,
+          `border-radius:${style.radius}px`,
+          `opacity:${node.opacity}`,
+          `object-fit:${node.objectFit ?? 'cover'}`,
+          node.strokeWidth > 0 ? `border:${node.strokeWidth}px solid ${style.strokeColor}` : '',
+          filterCss ? `filter:${filterCss}` : '',
+          animStyle,
+        ]
+          .filter(Boolean)
+          .join(';');
+        return `    <img class="node${hoverClass}" src="${escapeXml(node.imageSrc ?? '')}" alt="${escapeXml(node.name)}" style="${imgStyle}"${toastAttr} />`;
+      }
+
       if (node.type === 'path' && node.pathData) {
         const d = buildSvgPathData(
           node.pathData.points,
@@ -295,12 +360,12 @@ export function exportArtboardToStandaloneHtml(doc: DocumentState): string {
             : node.pathData.dashStyle === 'dotted'
               ? ' stroke-dasharray="2 6"'
               : '';
-        return `    <svg class="node${hoverClass}" style="left:${node.x}px;top:${node.y}px;width:${node.width}px;height:${node.height}px;overflow:visible;${animStyle}" viewBox="0 0 ${node.width} ${node.height}" fill="none"><path d="${d}" stroke="${escapeXml(style.strokeColor)}" stroke-width="${Math.max(1.5, node.strokeWidth || 2.5)}" stroke-linecap="round" stroke-linejoin="round"${dash}/></svg>`;
+        return `    <svg class="node${hoverClass}" style="left:${relX}px;top:${relY}px;width:${node.width}px;height:${node.height}px;overflow:visible;${animStyle}" viewBox="0 0 ${node.width} ${node.height}" fill="none"><path d="${d}" stroke="${escapeXml(style.strokeColor)}" stroke-width="${Math.max(1.5, node.strokeWidth || 2.5)}" stroke-linecap="round" stroke-linejoin="round"${dash}/></svg>`;
       }
 
       const inlineCss = [
-        `left:${node.x}px`,
-        `top:${node.y}px`,
+        `left:${relX}px`,
+        `top:${relY}px`,
         `width:${node.width}px`,
         `height:${node.height}px`,
         `border-radius:${style.radius}px`,
@@ -333,13 +398,13 @@ export function exportArtboardToStandaloneHtml(doc: DocumentState): string {
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>${escapeXml(doc.artboard.name)} — Exported by Atelier Canvas v2</title>
+  <title>${escapeXml(artboard.name)} — Exported by Atelier Canvas v3</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@600&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500;600&family=Space+Grotesk:wght@600;700&display=swap" rel="stylesheet" />
   <style>
     *{box-sizing:border-box;margin:0;padding:0}
     body{min-height:100vh;display:flex;align-items:center;justify-content:center;background:#08090D;font-family:'Inter',sans-serif;padding:32px}
-    .artboard{position:relative;overflow:hidden;width:${doc.artboard.width}px;height:${doc.artboard.height}px;border-radius:${doc.artboard.radius}px;background:${bg.cssBackground};box-shadow:0 32px 96px rgba(0,0,0,.55),0 0 0 1px rgba(255,255,255,.08)}
+    .artboard{position:relative;overflow:hidden;width:${artboard.width}px;height:${artboard.height}px;border-radius:${artboard.radius}px;background:${bg.cssBackground};box-shadow:0 32px 96px rgba(0,0,0,.55),0 0 0 1px rgba(255,255,255,.08)}
     .node{position:absolute;border:none;white-space:pre-wrap}
     .hover-lift-glow{transition:transform 220ms cubic-bezier(.22,1,.36,1),filter 220ms ease}
     .hover-lift-glow:hover{transform:translateY(-3px) scale(1.015);filter:brightness(1.1)}

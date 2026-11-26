@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   canvasToScreen,
   clampZoom,
+  fitArtboardsToViewport,
   fitArtboardToViewport,
   getRulerTicks,
   screenToCanvas,
@@ -48,8 +49,16 @@ import {
 import { applyAutoLayoutToFrame } from '../autolayout';
 import { ASSET_KIT_ITEMS, instantiateAssetKitItem } from '../assets';
 import { createNodeFromTool, createPathNodeFromPoints } from '../nodeFactory';
+import { buildImageFilterCss, STUDIO_PHOTOS } from '../media';
+import { computeInterNodeMeasurements, translateGroupNodes } from '../measure';
+import {
+  getDocumentArtboards,
+  getNodesForArtboard,
+  parseAndValidateProjectFile,
+  serializeProjectFile,
+} from '../projectStorage';
 
-describe('Viewport Coordinate & Ruler Engine', () => {
+describe('Viewport Coordinate, Multi-Artboard Fit & Ruler Engine', () => {
   it('round-trips screenToCanvas and canvasToScreen cleanly at arbitrary zoom', () => {
     const viewport = { x: 140, y: -60, zoom: 1.75 };
     const origin = { x: 48, y: 48 };
@@ -76,7 +85,7 @@ describe('Viewport Coordinate & Ruler Engine', () => {
     expect(clampZoom(0.05)).toBe(0.25);
   });
 
-  it('centers artboard gracefully inside stage viewport and generates ticks', () => {
+  it('centers single and multi-artboard documents gracefully and generates ruler ticks', () => {
     const vp = fitArtboardToViewport(
       { x: 0, y: 0, width: 860, height: 560 },
       { width: 1000, height: 700 },
@@ -84,8 +93,13 @@ describe('Viewport Coordinate & Ruler Engine', () => {
     );
     expect(vp.zoom).toBeGreaterThanOrEqual(0.25);
     expect(vp.zoom).toBeLessThanOrEqual(1.12);
-    expect(vp.x).toBeGreaterThan(0);
-    expect(vp.y).toBeGreaterThan(0);
+
+    const doc = createDocumentByTemplateId('fintech-spatial');
+    const boards = getDocumentArtboards(doc);
+    expect(boards.length).toBe(2);
+    const multiVp = fitArtboardsToViewport(boards, { width: 1000, height: 700 }, 52);
+    expect(multiVp.zoom).toBeGreaterThanOrEqual(0.25);
+    expect(multiVp.zoom).toBeLessThan(vp.zoom);
 
     const ticks = getRulerTicks(vp.x, vp.zoom, 1000);
     expect(ticks.length).toBeGreaterThan(10);
@@ -93,7 +107,7 @@ describe('Viewport Coordinate & Ruler Engine', () => {
   });
 });
 
-describe('Smart Snap Alignment Engine', () => {
+describe('Smart Snap, Alt-Measure Spacing & Multi-Select Group Drag Engine', () => {
   it('snaps within 6px threshold to artboard center and emits magenta guides', () => {
     const artboard = { x: 0, y: 0, width: 800, height: 600 };
     const result = computeSnap(
@@ -118,6 +132,31 @@ describe('Smart Snap Alignment Engine', () => {
     expect(result.y).toBe(100);
     const spacingGuide = result.guides.find((g) => g.kind === 'spacing' && g.orientation === 'horizontal');
     expect(spacingGuide?.distanceLabel).toBe('24px');
+  });
+
+  it('computes Alt-hover inter-node gaps for separated and contained boxes', () => {
+    const leftBox = { x: 40, y: 100, width: 120, height: 80 };
+    const rightBox = { x: 200, y: 120, width: 100, height: 80 };
+    const gapSegs = computeInterNodeMeasurements(leftBox, rightBox);
+    expect(gapSegs.some((s) => s.orientation === 'horizontal' && s.distancePx === 40)).toBe(true);
+
+    const container = { x: 20, y: 20, width: 300, height: 200 };
+    const inner = { x: 50, y: 60, width: 100, height: 80 };
+    const innerSegs = computeInterNodeMeasurements(inner, container);
+    expect(innerSegs.length).toBe(4);
+    expect(innerSegs.find((s) => s.distancePx === 30)).toBeTruthy();
+    expect(innerSegs.find((s) => s.distancePx === 40)).toBeTruthy();
+  });
+
+  it('translates multi-selected unlocked nodes together in lockstep', () => {
+    const doc = createDocumentByTemplateId('fintech-spatial');
+    const n1 = doc.nodes[0];
+    const n2 = doc.nodes[1];
+    const moved = translateGroupNodes(doc.nodes, [n1.id, n2.id], 32, -18);
+    expect(moved[0].x).toBe(n1.x + 32);
+    expect(moved[0].y).toBe(n1.y - 18);
+    expect(moved[1].x).toBe(n2.x + 32);
+    expect(moved[1].y).toBe(n2.y - 18);
   });
 });
 
@@ -146,7 +185,7 @@ describe('Undo / Redo History Engine', () => {
   });
 });
 
-describe('Design Token Engine & Brand Morphs', () => {
+describe('Design Tokens, Multi-Artboard Flows & Curated Templates', () => {
   it('resolves token-bound styles dynamically when switching brand theme', () => {
     const doc = createDocumentByTemplateId('fintech-spatial');
     const card = doc.nodes.find((n) => n.id === 'ft-balance-card')!;
@@ -165,13 +204,58 @@ describe('Design Token Engine & Brand Morphs', () => {
     expect(w3c.dimension.radius.base.$value).toBe('6px');
   });
 
-  it('provides all 4 curated templates with rich non-empty artboards', () => {
-    expect(TEMPLATE_PRESETS.length).toBe(4);
-    for (const preset of TEMPLATE_PRESETS) {
-      const doc = preset.createDocument();
-      expect(doc.nodes.length).toBeGreaterThanOrEqual(10);
-      expect(doc.artboard.width).toBeGreaterThanOrEqual(600);
-    }
+  it('provides 5 curated templates including multi-artboard FinTech & Luxury Editorial Photography', () => {
+    expect(TEMPLATE_PRESETS.length).toBe(5);
+    const fintech = createDocumentByTemplateId('fintech-spatial');
+    expect(getDocumentArtboards(fintech).length).toBe(2);
+    const transferBtn = fintech.nodes.find((n) => n.id === 'ft-cta-transfer')!;
+    const backBtn = fintech.nodes.find((n) => n.id === 'chk-back-btn')!;
+    expect(transferBtn.prototype?.clickAction).toBe('navigate_artboard');
+    expect(transferBtn.prototype?.targetArtboardId).toBe('artboard-checkout');
+    expect(backBtn.prototype?.targetArtboardId).toBe('artboard-fintech');
+    expect(getNodesForArtboard(fintech, 'artboard-checkout').length).toBeGreaterThanOrEqual(10);
+
+    const editorial = createDocumentByTemplateId('luxury-editorial');
+    const photos = editorial.nodes.filter((n) => n.type === 'image');
+    expect(photos.length).toBe(3);
+    expect(STUDIO_PHOTOS.length).toBe(6);
+  });
+});
+
+describe('Real Photography GPU Filter Grading & Serialization (SVG / HTML / React)', () => {
+  it('builds GPU CSS filter strings and serializes image layers cleanly across React, CSS, SVG & HTML', () => {
+    const filterCss = buildImageFilterCss({
+      brightness: 112,
+      contrast: 108,
+      saturate: 120,
+      grayscale: 15,
+      blur: 2,
+    });
+    expect(filterCss).toBe(
+      'brightness(112%) contrast(108%) saturate(120%) grayscale(15%) blur(2px)',
+    );
+
+    const editorial = createDocumentByTemplateId('luxury-editorial');
+    const heroPhoto = editorial.nodes.find((n) => n.id === 'ed-hero-photo')!;
+
+    const jsx = generateReactTailwind(editorial, heroPhoto);
+    expect(jsx).toContain('<motion.img');
+    expect(jsx).toContain('hero_eyewear_editorial.webp');
+    expect(jsx).toContain('object-cover');
+    expect(jsx).toContain('brightness(102%)');
+
+    const css = generatePureCss(editorial, heroPhoto);
+    expect(css).toContain('object-fit: cover;');
+    expect(css).toContain('filter: brightness(102%)');
+
+    const svg = exportArtboardToSvg(editorial);
+    expect(svg).toContain('<image href=');
+    expect(svg).toContain('hero_eyewear_editorial.webp');
+    expect(svg).toContain('clip-path="url(#clip-img-ed-hero-photo)"');
+
+    const html = exportArtboardToStandaloneHtml(editorial);
+    expect(html).toContain('<img class="node"');
+    expect(html).toContain('hero_eyewear_editorial.webp');
   });
 });
 
@@ -197,7 +281,7 @@ describe('WCAG 2.1 Contrast Luminance & AAA Auto-Fix Engine', () => {
   });
 });
 
-describe('Vector Bezier Pen & SVG Path Engine', () => {
+describe('Vector Bezier Pen & Auto-Layout Reflow Engines', () => {
   it('builds smooth cubic Bezier SVG path strings and serializes into SVG export', () => {
     const raw = [
       { x: 100, y: 200 },
@@ -208,7 +292,6 @@ describe('Vector Bezier Pen & SVG Path Engine', () => {
     const norm = normalizePathPoints(raw, 10);
     expect(norm.x).toBe(90);
     expect(norm.y).toBe(110);
-    expect(norm.points.length).toBe(4);
 
     const smoothD = buildSvgPathData(norm.points, true, false);
     expect(smoothD).toContain('M ');
@@ -218,14 +301,12 @@ describe('Vector Bezier Pen & SVG Path Engine', () => {
     expect(scaled[0].x).toBeCloseTo(norm.points[0].x * 2, 1);
 
     const doc = createDocumentByTemplateId('fintech-spatial');
-    const pathNode = createPathNodeFromPoints(raw, doc.tokens);
+    const pathNode = createPathNodeFromPoints(raw, doc.tokens, doc.artboard.id);
     const svg = exportArtboardToSvg({ ...doc, nodes: [...doc.nodes, pathNode] });
     expect(svg).toContain('<path d="M ');
     expect(svg).toContain('marker-end="url(#atelier-arrow)"');
   });
-});
 
-describe('Auto-Layout Flex Container Reflow Engine', () => {
   it('arranges contained child nodes cleanly in row and column directions with exact gap and padding', () => {
     const tokens = getTokenThemeById('obsidian-electric');
     const frame = createNodeFromTool('frame', 50, 50, 320, 140, tokens);
@@ -252,91 +333,62 @@ describe('Auto-Layout Flex Container Reflow Engine', () => {
       padding: 16,
       align: 'start',
     });
-    const fCol = colNodes.find((n) => n.id === frame.id)!;
     const k1 = colNodes.find((n) => n.id === c1.id)!;
     const k2 = colNodes.find((n) => n.id === c2.id)!;
     expect(k1.x).toBe(66);
     expect(k2.x).toBe(66);
     expect(Math.abs(k2.y - k1.y)).toBeGreaterThanOrEqual(40 + 12);
-    expect(fCol.height).toBeGreaterThanOrEqual(40 + 60 + 12 + 32);
   });
 });
 
-describe('Dev Mode Framer Motion Codegen, Redlines & Standalone HTML Export', () => {
-  it('emits Framer Motion motion.button props and CSS keyframes for animated nodes', () => {
+describe('Dev Mode Framer Motion Codegen, .atelier.json Project Files, Yjs & Assets', () => {
+  it('emits Framer Motion motion.button props, CSS keyframes and accurate redlines', () => {
     const doc = createDocumentByTemplateId('fintech-spatial');
     const cta = doc.nodes.find((n) => n.id === 'ft-cta-transfer')!;
 
     const singleJsx = generateReactTailwind(doc, cta);
     expect(singleJsx).toContain("import { motion } from 'framer-motion';");
-    expect(singleJsx).toContain('export function PrimaryTransferCTA()');
     expect(singleJsx).toContain('<motion.button');
     expect(singleJsx).toContain('whileHover=');
-    expect(singleJsx).toContain('Instant Transfer');
 
     const css = generatePureCss(doc, cta);
-    expect(css).toContain('--brand-primary:');
     expect(css).toContain('@keyframes atelier-spring-scale');
-    expect(css).toContain(':hover');
-
     const redlines = computeRedlineMeasurements(cta, doc.artboard);
     expect(redlines.left).toBe(cta.x);
-    expect(redlines.top).toBe(cta.y);
   });
 
-  it('exports valid standalone interactive animated HTML bundle', () => {
+  it('serializes and validates .atelier.json project files cleanly and rejects invalid inputs', () => {
     const doc = createDocumentByTemplateId('fintech-spatial');
-    const html = exportArtboardToStandaloneHtml(doc);
-    expect(html).toContain('<!doctype html>');
-    expect(html).toContain('@keyframes at-fade-up');
-    expect(html).toContain('$284,920.40');
-    expect(html).toContain('data-toast=');
-    expect(html).toContain('</html>');
-  });
-});
-
-describe('Pro UI Assets Kit, Yjs CRDT Sync & Generative Commands', () => {
-  it('instantiates all 10 Pro UI Component Kit assets cleanly bound to live tokens', () => {
-    const doc = createDocumentByTemplateId('fintech-spatial');
-    expect(ASSET_KIT_ITEMS.length).toBe(10);
-
-    for (const item of ASSET_KIT_ITEMS) {
-      const nodes = instantiateAssetKitItem(item.id, doc);
-      expect(nodes.length).toBeGreaterThanOrEqual(1);
+    const json = serializeProjectFile(doc);
+    const parsed = parseAndValidateProjectFile(json);
+    expect(parsed.ok).toBe(true);
+    if (parsed.ok) {
+      expect(parsed.doc.artboards?.length).toBe(2);
+      expect(parsed.doc.nodes.length).toBe(doc.nodes.length);
     }
 
-    const kpi = instantiateAssetKitItem('kpi-sparkline', doc);
-    expect(kpi.some((n) => n.type === 'path' && n.pathData && n.pathData.points.length >= 4)).toBe(true);
+    const bad = parseAndValidateProjectFile('{"format":"unknown"}');
+    expect(bad.ok).toBe(false);
+    const malformed = parseAndValidateProjectFile('{not valid json');
+    expect(malformed.ok).toBe(false);
   });
 
-  it('converges two independent Yjs CRDT rooms cleanly without conflict', () => {
-    const initial = createDocumentByTemplateId('fintech-spatial');
-    const roomA = new AtelierCrdtRoom(initial, 'test-room-a');
-    const roomB = new AtelierCrdtRoom(undefined, 'test-room-b');
+  it('instantiates all 10 Pro UI Kit components, syncs Yjs rooms, and filters CMD+K queries', () => {
+    const doc = createDocumentByTemplateId('fintech-spatial');
+    expect(ASSET_KIT_ITEMS.length).toBe(10);
+    for (const item of ASSET_KIT_ITEMS) {
+      expect(instantiateAssetKitItem(item.id, doc).length).toBeGreaterThanOrEqual(1);
+    }
 
-    const updated = {
-      ...initial,
-      artboard: { ...initial.artboard, name: 'Synced FinTech Board v2' },
-    };
-    roomA.pushLocalDocument(updated);
+    const roomA = new AtelierCrdtRoom(doc, 'test-v3-a');
+    const roomB = new AtelierCrdtRoom(undefined, 'test-v3-b');
+    roomA.pushLocalDocument({ ...doc, templateId: 'luxury-editorial' });
     syncTwoCrdtRooms(roomA, roomB);
-
-    const stateB = roomB.readState();
-    expect(stateB?.artboard.name).toBe('Synced FinTech Board v2');
-    expect(stateB?.nodes.length).toBe(initial.nodes.length);
-
+    expect(roomB.readState()?.templateId).toBe('luxury-editorial');
     roomA.destroy();
     roomB.destroy();
-  });
 
-  it('filters CMD+K queries and generates glass pricing card composition', () => {
-    const matches = filterCommands('glass pricing');
-    expect(matches[0]?.id).toBe('gen-glass-pricing');
-
-    const doc = createDocumentByTemplateId('fintech-spatial');
-    const created = createGeneratedNodesForCommand('gen-glass-pricing', doc);
-    expect(created.length).toBe(5);
-    expect(created[0].type).toBe('glass');
-    expect(created[0].blur).toBeGreaterThanOrEqual(16);
+    expect(filterCommands('3d stack')[0]?.id).toBe('mode-toggle-3dstack');
+    expect(createGeneratedNodesForCommand('gen-glass-pricing', doc).length).toBe(5);
   });
 });

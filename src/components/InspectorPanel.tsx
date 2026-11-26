@@ -9,6 +9,7 @@ import {
   AlignRight,
   AlignStartHorizontal,
   AlignStartVertical,
+  Camera,
   Check,
   Code2,
   Copy,
@@ -17,6 +18,7 @@ import {
   Palette,
   PenTool,
   Play,
+  RotateCcw,
   ShieldCheck,
   Sliders,
   Sparkles,
@@ -38,8 +40,10 @@ import type {
   EntranceAnimation,
   FillKind,
   HoverEffect,
+  ImageFilterConfig,
   InspectorTab,
   PrototypeConfig,
+  ScreenTransition,
   ShadowPreset,
   UiMode,
 } from '../types/canvas';
@@ -52,12 +56,15 @@ import {
   generatePureCss,
   generateReactTailwind,
   generateTokensJson,
+  resolveParentArtboard,
 } from '../engines/codegen';
 import {
   auditNodeContrast,
   autoFixContrastToAAA,
 } from '../engines/wcag';
 import { TEMPLATE_PRESETS } from '../engines/templates';
+import { DEFAULT_IMAGE_FILTER, STUDIO_PHOTOS } from '../engines/media';
+import { getDocumentArtboards } from '../engines/projectStorage';
 import type { StudioLabels } from '../i18n/labels';
 
 export type AlignDirection =
@@ -132,6 +139,7 @@ const HOVER_OPTIONS: Array<{ value: HoverEffect; label: string }> = [
 
 const CLICK_OPTIONS: Array<{ value: ClickAction; label: string }> = [
   { value: 'none', label: 'None' },
+  { value: 'navigate_artboard', label: 'Navigate to Screen (Artboard)' },
   { value: 'toast', label: 'Show Interactive Toast' },
   { value: 'pulse-target', label: 'Pulse Target Layer' },
   { value: 'switch-template', label: 'Switch Template' },
@@ -218,9 +226,13 @@ export function InspectorPanel({
   }, [doc, primary, codeFormat]);
 
   const redlines = useMemo(
-    () => (primary ? computeRedlineMeasurements(primary, doc.artboard) : null),
-    [primary, doc.artboard],
+    () =>
+      primary
+        ? computeRedlineMeasurements(primary, resolveParentArtboard(primary, doc))
+        : null,
+    [primary, doc],
   );
+  const artboards = useMemo(() => getDocumentArtboards(doc), [doc]);
 
   const wcagAudit = useMemo(
     () => (primary ? auditNodeContrast(primary, doc) : null),
@@ -435,6 +447,57 @@ export function InspectorPanel({
                     </option>
                   ))}
                 </select>
+
+                {proto.clickAction === 'navigate_artboard' && (
+                  <div className="space-y-1.5">
+                    <select
+                      data-testid="proto-target-artboard-select"
+                      value={proto.targetArtboardId ?? ''}
+                      onChange={(e) =>
+                        updateProto({ targetArtboardId: e.target.value })
+                      }
+                      className="w-full h-8 px-2 rounded-md border text-xs outline-none"
+                      style={{
+                        backgroundColor: 'var(--studio-surface-2)',
+                        borderColor: 'var(--studio-border)',
+                        color: 'var(--studio-text)',
+                      }}
+                    >
+                      <option value="" className="bg-slate-900 text-white">
+                        Select destination screen...
+                      </option>
+                      {artboards.map((b) => (
+                        <option key={b.id} value={b.id} className="bg-slate-900 text-white">
+                          {b.name} ({b.width}×{b.height})
+                        </option>
+                      ))}
+                    </select>
+                    <select
+                      value={proto.transition ?? 'slide-left'}
+                      onChange={(e) =>
+                        updateProto({
+                          transition: e.target.value as ScreenTransition,
+                        })
+                      }
+                      className="w-full h-7 px-2 rounded-md border font-mono-tech text-[10px] outline-none"
+                      style={{
+                        backgroundColor: 'var(--studio-surface-2)',
+                        borderColor: 'var(--studio-border)',
+                        color: 'var(--studio-cyan)',
+                      }}
+                    >
+                      <option value="slide-left" className="bg-slate-900 text-white">
+                        Transition: Slide Left
+                      </option>
+                      <option value="dissolve" className="bg-slate-900 text-white">
+                        Transition: Dissolve
+                      </option>
+                      <option value="spring-scale" className="bg-slate-900 text-white">
+                        Transition: Spring Scale
+                      </option>
+                    </select>
+                  </div>
+                )}
 
                 {proto.clickAction === 'toast' && (
                   <input
@@ -1398,8 +1461,134 @@ export function InspectorPanel({
                 </div>
               </section>
 
+              {/* PHOTO & GPU FILTER GRADING PANEL (Image nodes) */}
+              {primary.type === 'image' && (
+                <section
+                  data-testid="image-inspector"
+                  className="space-y-2.5 pt-2 border-t"
+                  style={{ borderColor: 'var(--studio-border)' }}
+                >
+                  <div className="flex items-center justify-between">
+                    <span className="font-mono-tech text-[10px] uppercase tracking-wider flex items-center gap-1.5" style={{ color: 'var(--studio-cyan)' }}>
+                      <Camera size={11} />
+                      <span>{labels.photoGradingSection}</span>
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        onUpdateNode(primary.id, {
+                          imageFilter: { ...DEFAULT_IMAGE_FILTER },
+                        })
+                      }
+                      title="Reset GPU Color Grading"
+                      className="h-5 px-1.5 rounded font-mono-tech text-[9px] flex items-center gap-1 hover:bg-white/10 cursor-pointer"
+                      style={{ color: 'var(--studio-text-muted)' }}
+                    >
+                      <RotateCcw size={9} />
+                      <span>Reset</span>
+                    </button>
+                  </div>
+
+                  {/* Object Fit Switch */}
+                  <div className="grid grid-cols-2 gap-1.5">
+                    {(['cover', 'contain'] as const).map((fit) => (
+                      <button
+                        key={fit}
+                        type="button"
+                        onClick={() => onUpdateNode(primary.id, { objectFit: fit })}
+                        className="h-6 rounded border font-mono-tech text-[10px] uppercase cursor-pointer"
+                        style={{
+                          backgroundColor:
+                            (primary.objectFit ?? 'cover') === fit
+                              ? 'var(--studio-accent)'
+                              : 'var(--studio-surface-2)',
+                          borderColor: 'var(--studio-border)',
+                          color:
+                            (primary.objectFit ?? 'cover') === fit
+                              ? '#FFFFFF'
+                              : 'var(--studio-text-secondary)',
+                        }}
+                      >
+                        Fit: {fit}
+                      </button>
+                    ))}
+                  </div>
+
+                  {/* Quick Studio Photo Swap Strip */}
+                  <div className="grid grid-cols-6 gap-1">
+                    {STUDIO_PHOTOS.map((photo) => (
+                      <button
+                        key={photo.id}
+                        type="button"
+                        title={`Swap to ${photo.title}`}
+                        onClick={() =>
+                          onUpdateNode(primary.id, { imageSrc: photo.src })
+                        }
+                        className="aspect-square rounded overflow-hidden border cursor-pointer"
+                        style={{
+                          borderColor:
+                            primary.imageSrc === photo.src
+                              ? '#06B6D4'
+                              : 'var(--studio-border)',
+                        }}
+                      >
+                        <img
+                          src={photo.src}
+                          alt={photo.title}
+                          className="w-full h-full object-cover"
+                        />
+                      </button>
+                    ))}
+                  </div>
+
+                  {/* 5 Live GPU Grading Sliders */}
+                  {(
+                    [
+                      ['brightness', 'Brightness', 50, 150, '%'],
+                      ['contrast', 'Contrast', 50, 150, '%'],
+                      ['saturate', 'Saturation', 0, 200, '%'],
+                      ['grayscale', 'Grayscale', 0, 100, '%'],
+                      ['blur', 'Photo Blur', 0, 20, 'px'],
+                    ] as const
+                  ).map(([key, lbl, min, max, unit]) => {
+                    const currentFilter: ImageFilterConfig =
+                      primary.imageFilter ?? DEFAULT_IMAGE_FILTER;
+                    const val = currentFilter[key];
+                    return (
+                      <div key={key} className="space-y-0.5">
+                        <div className="flex justify-between font-mono-tech text-[10px]">
+                          <span style={{ color: 'var(--studio-text-secondary)' }}>
+                            {lbl}
+                          </span>
+                          <span style={{ color: 'var(--studio-cyan)' }}>
+                            {val}
+                            {unit}
+                          </span>
+                        </div>
+                        <input
+                          type="range"
+                          data-testid={`img-filter-${key}`}
+                          min={min}
+                          max={max}
+                          value={val}
+                          onChange={(e) =>
+                            onUpdateNode(primary.id, {
+                              imageFilter: {
+                                ...currentFilter,
+                                [key]: Number(e.target.value),
+                              },
+                            })
+                          }
+                          className="w-full studio-range"
+                        />
+                      </div>
+                    );
+                  })}
+                </section>
+              )}
+
               {/* Fill Controls */}
-              {primary.type !== 'text' && primary.type !== 'path' && (
+              {primary.type !== 'text' && primary.type !== 'path' && primary.type !== 'image' && (
                 <section className="space-y-2 pt-2 border-t" style={{ borderColor: 'var(--studio-border)' }}>
                   <div className="flex items-center justify-between">
                     <span className="font-mono-tech text-[10px] uppercase tracking-wider" style={{ color: 'var(--studio-text-muted)' }}>

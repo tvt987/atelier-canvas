@@ -10,6 +10,7 @@ import type {
   InspectorTab,
   LeftRailTab,
   Locale,
+  Point,
   ToolType,
   UiMode,
   Viewport,
@@ -26,7 +27,7 @@ import {
 } from './engines/history';
 import {
   clampZoom,
-  fitArtboardToViewport,
+  fitArtboardsToViewport,
   zoomAtPoint,
 } from './engines/viewport';
 import {
@@ -40,7 +41,17 @@ import {
 import { applyAutoLayoutToFrame } from './engines/autolayout';
 import { instantiateAssetKitItem } from './engines/assets';
 import { generateReactTailwind } from './engines/codegen';
-import { exportNodeToSvg } from './engines/exporter';
+import { downloadTextFile, exportNodeToSvg } from './engines/exporter';
+import { createImageNode } from './engines/nodeFactory';
+import type { StudioPhotoPreset } from './engines/media';
+import {
+  clearWorkspaceLocalStorage,
+  getDocumentArtboards,
+  loadWorkspaceFromLocalStorage,
+  parseAndValidateProjectFile,
+  saveWorkspaceToLocalStorage,
+  serializeProjectFile,
+} from './engines/projectStorage';
 import { LABELS } from './i18n/labels';
 import { TopBar } from './components/TopBar';
 import { ToolDock } from './components/ToolDock';
@@ -55,6 +66,7 @@ const TOOL_HOTKEYS: Record<string, ToolType> = {
   v: 'select',
   h: 'hand',
   p: 'pen',
+  i: 'image',
   f: 'frame',
   r: 'rect',
   o: 'ellipse',
@@ -76,22 +88,27 @@ function isEditableTarget(target: EventTarget | null): boolean {
 }
 
 function formatClock(): string {
-  const now = new Date();
-  return now.toTimeString().slice(0, 5);
+  return new Date().toTimeString().slice(0, 5);
 }
 
 export function App() {
-  const [history, setHistory] = useState<HistoryState<DocumentState>>(() =>
-    createHistory(createDocumentByTemplateId('fintech-spatial')),
-  );
+  const [history, setHistory] = useState<HistoryState<DocumentState>>(() => {
+    const restored = loadWorkspaceFromLocalStorage();
+    return createHistory(
+      restored ?? createDocumentByTemplateId('fintech-spatial'),
+    );
+  });
   const [snapshots, setSnapshots] = useState<DesignSnapshot[]>(() => [
     {
       id: 'snap-initial',
-      label: 'v2.0 Initial FinTech',
+      label: 'v3.0 Multi-Screen FinTech',
       timestamp: formatClock(),
       doc: createDocumentByTemplateId('fintech-spatial'),
     },
   ]);
+  const [activeArtboardId, setActiveArtboardId] = useState<string>(
+    () => history.present.artboard.id,
+  );
   const [liveNodesOverride, setLiveNodesOverride] = useState<CanvasNode[] | null>(
     null,
   );
@@ -104,6 +121,8 @@ export function App() {
   const [locale, setLocale] = useState<Locale>('en');
   const [layersOpen, setLayersOpen] = useState(true);
   const [spacePressed, setSpacePressed] = useState(false);
+  const [altPressed, setAltPressed] = useState(false);
+  const [stack3D, setStack3D] = useState(false);
   const [commandOpen, setCommandOpen] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
   const [playerOpen, setPlayerOpen] = useState(false);
@@ -111,11 +130,12 @@ export function App() {
   const [coDesignerStep, setCoDesignerStep] = useState(0);
   const [crdtRevisions, setCrdtRevisions] = useState(1);
   const [crdtSynced, setCrdtSynced] = useState(true);
+  const [savedLocally, setSavedLocally] = useState(true);
   const [studioNotice, setStudioNotice] = useState<string | null>(null);
 
   const stageSizeRef = useRef({ width: 960, height: 640 });
   const hasCenteredInitialRef = useRef(false);
-  const [viewport, setViewport] = useState<Viewport>({ x: 56, y: 44, zoom: 0.92 });
+  const [viewport, setViewport] = useState<Viewport>({ x: 32, y: 56, zoom: 0.64 });
 
   const roomRef = useRef<AtelierCrdtRoom | null>(null);
   const suppressBroadcastRef = useRef(false);
@@ -128,6 +148,10 @@ export function App() {
         : committedDoc,
     [committedDoc, liveNodesOverride],
   );
+  const artboards = useMemo(
+    () => getDocumentArtboards(effectiveDoc),
+    [effectiveDoc],
+  );
 
   const labels = LABELS[locale];
 
@@ -137,6 +161,15 @@ export function App() {
       setStudioNotice((prev) => (prev === msg ? null : prev));
     }, 2400);
   }, []);
+
+  // Local-first auto-save to localStorage
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      const ok = saveWorkspaceToLocalStorage(committedDoc);
+      setSavedLocally(ok);
+    }, 280);
+    return () => window.clearTimeout(timer);
+  }, [committedDoc]);
 
   // Initialize Yjs CRDT multiplayer room
   useEffect(() => {
@@ -215,32 +248,103 @@ export function App() {
       stageSizeRef.current = size;
       if (!hasCenteredInitialRef.current && size.width > 120 && size.height > 120) {
         hasCenteredInitialRef.current = true;
-        setViewport(fitArtboardToViewport(committedDoc.artboard, size, 64));
+        setViewport(
+          fitArtboardsToViewport(getDocumentArtboards(committedDoc), size, 52),
+        );
       }
     },
-    [committedDoc.artboard],
+    [committedDoc],
   );
 
   const handleFitToScreen = useCallback(() => {
     setViewport(
-      fitArtboardToViewport(committedDoc.artboard, stageSizeRef.current, 64),
+      fitArtboardsToViewport(
+        getDocumentArtboards(committedDoc),
+        stageSizeRef.current,
+        52,
+      ),
     );
-  }, [committedDoc.artboard]);
+  }, [committedDoc]);
 
   const handleSelectTemplate = useCallback((templateId: string) => {
     const next = createDocumentByTemplateId(templateId);
     setSelectedIds([]);
     setLiveNodesOverride(null);
+    setStack3D(false);
+    setActiveArtboardId(next.artboard.id);
     setHistory((prev) => pushHistory(prev, next));
-    setViewport(fitArtboardToViewport(next.artboard, stageSizeRef.current, 64));
+    setViewport(
+      fitArtboardsToViewport(
+        getDocumentArtboards(next),
+        stageSizeRef.current,
+        52,
+      ),
+    );
   }, []);
+
+  const handleExportProjectFile = useCallback(() => {
+    const json = serializeProjectFile(committedDoc);
+    const slug = committedDoc.artboard.name
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-|-$/g, '');
+    downloadTextFile(
+      json,
+      `${slug || 'atelier-project'}.atelier.json`,
+      'application/json;charset=utf-8',
+    );
+    notify('Saved .atelier.json project file');
+  }, [committedDoc, notify]);
+
+  const handleImportProjectFile = useCallback(
+    (file: File) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const result = parseAndValidateProjectFile(String(reader.result ?? ''));
+        if (!result.ok) {
+          notify(`Invalid project file: ${result.error}`);
+          return;
+        }
+        commitDocument(result.doc);
+        setActiveArtboardId(result.doc.artboard.id);
+        setSelectedIds([]);
+        setViewport(
+          fitArtboardsToViewport(
+            getDocumentArtboards(result.doc),
+            stageSizeRef.current,
+            52,
+          ),
+        );
+        notify(`Opened project: ${result.doc.artboard.name}`);
+      };
+      reader.readAsText(file);
+    },
+    [commitDocument, notify],
+  );
+
+  const handleResetWorkspace = useCallback(() => {
+    clearWorkspaceLocalStorage();
+    const fresh = createDocumentByTemplateId('fintech-spatial');
+    commitDocument(fresh);
+    setActiveArtboardId(fresh.artboard.id);
+    setSelectedIds([]);
+    setStack3D(false);
+    setViewport(
+      fitArtboardsToViewport(
+        getDocumentArtboards(fresh),
+        stageSizeRef.current,
+        52,
+      ),
+    );
+    notify('Workspace reset to default');
+  }, [commitDocument, notify]);
 
   const handleSaveSnapshot = useCallback(
     (label?: string) => {
       const nextIndex = snapshots.length + 1;
       const snap: DesignSnapshot = {
         id: `snap-${Date.now().toString(36)}`,
-        label: label || `v2.${nextIndex} ${committedDoc.artboard.name}`,
+        label: label || `v3.${nextIndex} ${committedDoc.artboard.name}`,
         timestamp: formatClock(),
         doc: structuredClone(committedDoc),
       };
@@ -254,11 +358,78 @@ export function App() {
     (snapshotId: string) => {
       const target = snapshots.find((s) => s.id === snapshotId);
       if (!target) return;
-      commitDocument(structuredClone(target.doc));
+      const cloned = structuredClone(target.doc);
+      commitDocument(cloned);
+      setActiveArtboardId(cloned.artboard.id);
       setSelectedIds([]);
       notify(`Restored snapshot: ${target.label}`);
     },
     [commitDocument, notify, snapshots],
+  );
+
+  const handleInsertStudioPhoto = useCallback(
+    (photo: StudioPhotoPreset) => {
+      const targetBoard =
+        artboards.find((a) => a.id === activeArtboardId) ?? committedDoc.artboard;
+      const w = Math.min(photo.defaultW, targetBoard.width - 48);
+      const h = Math.min(photo.defaultH, targetBoard.height - 48);
+      const x = targetBoard.x + Math.round((targetBoard.width - w) / 2);
+      const y = targetBoard.y + Math.round((targetBoard.height - h) / 2);
+      const node = createImageNode(
+        photo.src,
+        photo.title,
+        x,
+        y,
+        w,
+        h,
+        committedDoc.tokens,
+        targetBoard.id,
+      );
+      commitDocument({
+        ...committedDoc,
+        nodes: [...committedDoc.nodes, node],
+      });
+      setSelectedIds([node.id]);
+      setUiMode('design');
+      notify(`Inserted photo: ${photo.title}`);
+    },
+    [activeArtboardId, artboards, committedDoc, commitDocument, notify],
+  );
+
+  const insertImageFileAt = useCallback(
+    (file: File, pt?: Point, targetBoardId?: string) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const dataUrl = String(reader.result ?? '');
+        if (!dataUrl) return;
+        const board =
+          artboards.find((a) => a.id === (targetBoardId ?? activeArtboardId)) ??
+          committedDoc.artboard;
+        const w = 280;
+        const h = 210;
+        const x = pt ? pt.x - w / 2 : board.x + (board.width - w) / 2;
+        const y = pt ? pt.y - h / 2 : board.y + (board.height - h) / 2;
+        const node = createImageNode(
+          dataUrl,
+          file.name.replace(/\.[^.]+$/, '') || 'Uploaded Photo',
+          x,
+          y,
+          w,
+          h,
+          committedDoc.tokens,
+          board.id,
+        );
+        commitDocument({
+          ...committedDoc,
+          nodes: [...committedDoc.nodes, node],
+        });
+        setSelectedIds([node.id]);
+        setUiMode('design');
+        notify(`Added local photo: ${node.name}`);
+      };
+      reader.readAsDataURL(file);
+    },
+    [activeArtboardId, artboards, committedDoc, commitDocument, notify],
   );
 
   const handleLiveUpdateNodes = useCallback((nextNodes: CanvasNode[]) => {
@@ -304,14 +475,26 @@ export function App() {
     [notify],
   );
 
-  const handleUpdateArtboard = useCallback((patch: Partial<Artboard>) => {
-    setHistory((prev) =>
-      pushHistory(prev, {
-        ...prev.present,
-        artboard: { ...prev.present.artboard, ...patch },
-      }),
-    );
-  }, []);
+  const handleUpdateArtboard = useCallback(
+    (patch: Partial<Artboard>) => {
+      setHistory((prev) => {
+        const boards = getDocumentArtboards(prev.present);
+        const updatedBoards = boards.map((b) =>
+          b.id === activeArtboardId ? { ...b, ...patch } : b,
+        );
+        const primaryUpdated =
+          prev.present.artboard.id === activeArtboardId
+            ? { ...prev.present.artboard, ...patch }
+            : prev.present.artboard;
+        return pushHistory(prev, {
+          ...prev.present,
+          artboard: primaryUpdated,
+          artboards: updatedBoards,
+        });
+      });
+    },
+    [activeArtboardId],
+  );
 
   const handleUpdateTokens = useCallback((nextTokens: DesignTokens) => {
     setHistory((prev) =>
@@ -324,7 +507,12 @@ export function App() {
 
   const handleInsertAsset = useCallback(
     (assetId: string) => {
-      const created = instantiateAssetKitItem(assetId, committedDoc);
+      const targetBoard =
+        artboards.find((a) => a.id === activeArtboardId) ?? committedDoc.artboard;
+      const created = instantiateAssetKitItem(assetId, committedDoc, {
+        x: targetBoard.x + targetBoard.width / 2,
+        y: targetBoard.y + targetBoard.height / 2,
+      }).map((n) => ({ ...n, artboardId: targetBoard.id }));
       if (created.length === 0) return;
       commitDocument({
         ...committedDoc,
@@ -334,7 +522,7 @@ export function App() {
       setUiMode('design');
       notify(`Inserted ${created[0].name} (+${created.length} layers)`);
     },
-    [committedDoc, commitDocument, notify],
+    [activeArtboardId, artboards, committedDoc, commitDocument, notify],
   );
 
   const handleUndo = useCallback(() => {
@@ -434,6 +622,7 @@ export function App() {
           const pad = 18;
           const wrapper: CanvasNode = {
             id: `glass-wrap-${Date.now().toString(36)}`,
+            artboardId: node.artboardId ?? committedDoc.artboard.id,
             name: `${node.name} Glass Frame`,
             type: 'glass',
             x: Math.round(node.x - pad),
@@ -480,7 +669,7 @@ export function App() {
           try {
             await navigator.clipboard.writeText(code);
           } catch {
-            // Clipboard fallback ignored in headless contexts
+            // Clipboard fallback ignored
           }
           notify(`Copied React + TW4 for ${node.name}`);
           break;
@@ -538,13 +727,17 @@ export function App() {
       );
       if (targets.length === 0) return;
 
+      const parentBoard =
+        artboards.find((b) => b.id === (targets[0].artboardId ?? committedDoc.artboard.id)) ??
+        committedDoc.artboard;
+
       const refBounds =
         targets.length === 1
           ? {
-              x: committedDoc.artboard.x,
-              y: committedDoc.artboard.y,
-              width: committedDoc.artboard.width,
-              height: committedDoc.artboard.height,
+              x: parentBoard.x,
+              y: parentBoard.y,
+              width: parentBoard.width,
+              height: parentBoard.height,
             }
           : {
               x: Math.min(...targets.map((n) => n.x)),
@@ -589,7 +782,7 @@ export function App() {
 
       commitDocument({ ...committedDoc, nodes: nextNodes });
     },
-    [committedDoc, commitDocument, selectedIds],
+    [artboards, committedDoc, commitDocument, selectedIds],
   );
 
   const handleExecuteCommand = useCallback(
@@ -624,6 +817,14 @@ export function App() {
         setUiMode((m) => (m === 'dev' ? 'design' : 'dev'));
         return;
       }
+      if (commandId === 'mode-toggle-3dstack') {
+        setStack3D((v) => !v);
+        return;
+      }
+      if (commandId === 'project-save-file') {
+        handleExportProjectFile();
+        return;
+      }
       if (commandId === 'snapshot-save') {
         handleSaveSnapshot();
         return;
@@ -636,7 +837,9 @@ export function App() {
         setExportOpen(true);
         return;
       }
-      if (commandId === 'template-swiss') {
+      if (commandId === 'template-editorial') {
+        handleSelectTemplate('luxury-editorial');
+      } else if (commandId === 'template-swiss') {
         handleSelectTemplate('swiss-poster');
       } else if (commandId === 'template-saas') {
         handleSelectTemplate('ai-saas-hero');
@@ -650,17 +853,21 @@ export function App() {
       committedDoc,
       commitDocument,
       handleAlignSelection,
+      handleExportProjectFile,
       handleSaveSnapshot,
       handleSelectTemplate,
       handleUpdateTokens,
     ],
   );
 
-  // Global Figma-grade keyboard shortcuts
+  // Keyboard shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      const mod = e.ctrlKey || e.metaKey;
+      if (e.key === 'Alt') {
+        setAltPressed(true);
+      }
 
+      const mod = e.ctrlKey || e.metaKey;
       if (mod && e.key.toLowerCase() === 'k') {
         e.preventDefault();
         setCommandOpen((o) => !o);
@@ -694,7 +901,6 @@ export function App() {
         return;
       }
 
-      // 3-mode Pro switching: Shift+1 DESIGN, Shift+2 PROTOTYPE, Shift+3 DEV MODE
       if (e.shiftKey && e.code === 'Digit1') {
         e.preventDefault();
         setUiMode('design');
@@ -749,16 +955,22 @@ export function App() {
     };
 
     const handleKeyUp = (e: KeyboardEvent) => {
-      if (e.code === 'Space') {
-        setSpacePressed(false);
-      }
+      if (e.code === 'Space') setSpacePressed(false);
+      if (e.key === 'Alt') setAltPressed(false);
+    };
+
+    const handleBlur = () => {
+      setSpacePressed(false);
+      setAltPressed(false);
     };
 
     window.addEventListener('keydown', handleKeyDown);
     window.addEventListener('keyup', handleKeyUp);
+    window.addEventListener('blur', handleBlur);
     return () => {
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
+      window.removeEventListener('blur', handleBlur);
     };
   }, [
     committedDoc,
@@ -802,6 +1014,10 @@ export function App() {
         snapshots={snapshots}
         onSaveSnapshot={handleSaveSnapshot}
         onRestoreSnapshot={handleRestoreSnapshot}
+        onExportProjectFile={handleExportProjectFile}
+        onImportProjectFile={handleImportProjectFile}
+        onResetWorkspace={handleResetWorkspace}
+        savedLocally={savedLocally}
         zoom={viewport.zoom}
         onZoomIn={() => handleZoomBy(0.15)}
         onZoomOut={() => handleZoomBy(-0.15)}
@@ -834,13 +1050,16 @@ export function App() {
         <ToolDock
           activeTool={activeTool}
           onSelectTool={setActiveTool}
+          onUploadLocalImage={(file) => insertImageFileAt(file)}
           layersOpen={layersOpen}
           onToggleLayers={() => setLayersOpen((o) => !o)}
         />
 
         {layersOpen && (
           <LayersPanel
-            artboard={effectiveDoc.artboard}
+            artboards={artboards}
+            activeArtboardId={activeArtboardId}
+            onSelectArtboard={setActiveArtboardId}
             nodes={effectiveDoc.nodes}
             selectedIds={selectedIds}
             leftTab={leftTab}
@@ -853,12 +1072,16 @@ export function App() {
             onDuplicate={handleDuplicate}
             onDelete={handleDelete}
             onInsertAsset={handleInsertAsset}
+            onInsertStudioPhoto={handleInsertStudioPhoto}
+            onUploadLocalImage={(file) => insertImageFileAt(file)}
             labels={labels}
           />
         )}
 
         <CanvasStage
           doc={effectiveDoc}
+          activeArtboardId={activeArtboardId}
+          onSelectArtboard={setActiveArtboardId}
           viewport={viewport}
           onViewportChange={setViewport}
           onStageResize={handleStageResize}
@@ -868,9 +1091,15 @@ export function App() {
           onSelectIds={setSelectedIds}
           uiMode={uiMode}
           spacePressed={spacePressed}
+          altPressed={altPressed}
+          stack3D={stack3D}
+          onToggleStack3D={() => setStack3D((v) => !v)}
           onLiveUpdateNodes={handleLiveUpdateNodes}
           onCommitNodes={handleCommitNodes}
           onContextAction={handleContextAction}
+          onDropLocalImage={(file, pt, boardId) =>
+            insertImageFileAt(file, pt, boardId)
+          }
           coDesigner={coDesigner}
           crdtSynced={crdtSynced}
           labels={labels}
@@ -894,7 +1123,6 @@ export function App() {
         />
       </main>
 
-      {/* Non-intrusive Studio Feedback Toast */}
       {studioNotice && (
         <div
           data-testid="studio-notice"

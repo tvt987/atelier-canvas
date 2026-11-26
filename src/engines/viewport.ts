@@ -63,6 +63,31 @@ export function fitArtboardToViewport(
   return { x, y, zoom };
 }
 
+export function fitArtboardsToViewport(
+  artboards: Array<Pick<Artboard, 'x' | 'y' | 'width' | 'height'>>,
+  stageSize: { width: number; height: number },
+  padding = 56,
+): Viewport {
+  if (artboards.length === 0) {
+    return { x: 48, y: 48, zoom: 0.9 };
+  }
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (const ab of artboards) {
+    minX = Math.min(minX, ab.x);
+    minY = Math.min(minY, ab.y);
+    maxX = Math.max(maxX, ab.x + ab.width);
+    maxY = Math.max(maxY, ab.y + ab.height);
+  }
+  return fitArtboardToViewport(
+    { x: minX, y: minY, width: maxX - minX, height: maxY - minY },
+    stageSize,
+    padding,
+  );
+}
+
 export interface RulerTick {
   screenPos: number;
   canvasValue: number;
