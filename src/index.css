@@ -19,6 +19,7 @@
     --studio-accent: #6366F1;
     --studio-accent-soft: rgba(99, 102, 241, 0.16);
     --studio-cyan: #06B6D4;
+    --studio-proto: #10B981;
     --studio-snap: #F43F5E;
     --studio-grid-dot: rgba(255, 255, 255, 0.09);
     --studio-grid-major: rgba(255, 255, 255, 0.035);
@@ -39,6 +40,7 @@
     --studio-accent: #4F46E5;
     --studio-accent-soft: rgba(79, 70, 229, 0.11);
     --studio-cyan: #0891B2;
+    --studio-proto: #059669;
     --studio-snap: #E11D48;
     --studio-grid-dot: rgba(15, 23, 42, 0.13);
     --studio-grid-major: rgba(15, 23, 42, 0.045);
@@ -80,7 +82,6 @@
   font-family: var(--font-editorial);
 }
 
-/* Precision thin studio scrollbars */
 .studio-scroll::-webkit-scrollbar {
   width: 5px;
   height: 5px;
@@ -99,14 +100,12 @@
   background: var(--studio-text-muted);
 }
 
-/* View Transitions API smooth studio chrome morph */
 ::view-transition-old(root),
 ::view-transition-new(root) {
   animation-duration: 280ms;
   animation-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
 }
 
-/* Crisp custom range inputs */
 input[type='range'].studio-range {
   -webkit-appearance: none;
   appearance: none;
@@ -136,4 +135,116 @@ input[type='number'].no-spin::-webkit-outer-spin-button {
 
 input[type='number'].no-spin {
   -moz-appearance: textfield;
+}
+
+/* Prototype Engine GPU Motion Keyframes */
+@keyframes atelier-fade-up {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 22px, 0);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+@keyframes atelier-spring-scale {
+  0% {
+    opacity: 0;
+    transform: scale(0.84);
+  }
+  70% {
+    opacity: 1;
+    transform: scale(1.03);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes atelier-slide-left {
+  from {
+    opacity: 0;
+    transform: translate3d(28px, 0, 0);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+@keyframes atelier-elastic-pop {
+  0% {
+    opacity: 0;
+    transform: scale(0.72) translate3d(0, 10px, 0);
+  }
+  65% {
+    opacity: 1;
+    transform: scale(1.06) translate3d(0, -2px, 0);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1) translate3d(0, 0, 0);
+  }
+}
+
+@keyframes atelier-float-levitate {
+  0%,
+  100% {
+    transform: translate3d(0, 0, 0);
+  }
+  50% {
+    transform: translate3d(0, -6px, 0);
+  }
+}
+
+@keyframes atelier-shimmer-glow {
+  0%,
+  100% {
+    filter: brightness(1);
+  }
+  50% {
+    filter: brightness(1.18) drop-shadow(0 0 12px rgba(99, 102, 241, 0.45));
+  }
+}
+
+@keyframes atelier-pulse-ring {
+  0% {
+    box-shadow: 0 0 0 0 rgba(6, 182, 212, 0.75);
+  }
+  70% {
+    box-shadow: 0 0 0 14px rgba(6, 182, 212, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(6, 182, 212, 0);
+  }
+}
+
+.proto-hover-lift-glow {
+  transition: transform 220ms cubic-bezier(0.22, 1, 0.36, 1), filter 220ms ease;
+}
+.proto-hover-lift-glow:hover {
+  transform: translate3d(0, -3px, 0) scale(1.015);
+  filter: brightness(1.1);
+}
+
+.proto-hover-scale {
+  transition: transform 200ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+.proto-hover-scale:hover {
+  transform: scale(1.03);
+}
+
+.proto-hover-glass-tilt {
+  transition: transform 260ms cubic-bezier(0.22, 1, 0.36, 1), filter 220ms ease;
+}
+.proto-hover-glass-tilt:hover {
+  transform: perspective(600px) rotateX(2.5deg) rotateY(-2.5deg) translate3d(0, -2px, 0);
+  filter: brightness(1.07);
+}
+
+.proto-pulsing {
+  animation: atelier-pulse-ring 900ms cubic-bezier(0.16, 1, 0.3, 1) 2 !important;
 }

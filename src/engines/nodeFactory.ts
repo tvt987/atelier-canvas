@@ -1,9 +1,52 @@
-import type { CanvasNode, DesignTokens, NodeType } from '../types/canvas';
+import type {
+  CanvasNode,
+  DesignTokens,
+  NodeType,
+  PathPoint,
+} from '../types/canvas';
+import { normalizePathPoints } from './bezier';
 
 let counter = 1;
 
+export function createPathNodeFromPoints(
+  rawPoints: PathPoint[],
+  tokens: DesignTokens,
+): CanvasNode {
+  const normalized = normalizePathPoints(rawPoints, 10);
+  const id = `node-path-${Date.now().toString(36)}-${counter++}`;
+  return {
+    id,
+    name: `Vector Curve ${counter}`,
+    type: 'path',
+    x: normalized.x,
+    y: normalized.y,
+    width: normalized.width,
+    height: normalized.height,
+    rotation: 0,
+    radius: 0,
+    opacity: 1,
+    fill: { kind: 'none', color: 'transparent' },
+    strokeColor: tokens.brandAccent,
+    strokeWidth: 2.5,
+    blur: 0,
+    shadow: 'none',
+    blendMode: 'normal',
+    locked: false,
+    visible: true,
+    tokenBinding: { stroke: 'brandAccent' },
+    pathData: {
+      points: normalized.points,
+      closed: false,
+      smooth: true,
+      dashStyle: 'solid',
+      endArrow: true,
+      glow: true,
+    },
+  };
+}
+
 export function createNodeFromTool(
-  type: NodeType,
+  type: Exclude<NodeType, 'path'>,
   x: number,
   y: number,
   width: number,
@@ -11,7 +54,7 @@ export function createNodeFromTool(
   tokens: DesignTokens,
 ): CanvasNode {
   const id = `node-${type}-${Date.now().toString(36)}-${counter++}`;
-  const defaultSizes: Record<NodeType, { w: number; h: number }> = {
+  const defaultSizes: Record<Exclude<NodeType, 'path'>, { w: number; h: number }> = {
     frame: { w: 280, h: 180 },
     rect: { w: 180, h: 120 },
     ellipse: { w: 130, h: 130 },
@@ -55,6 +98,13 @@ export function createNodeFromTool(
           fill: 'surfaceCard',
           stroke: 'borderSubtle',
           radius: 'radiusBase',
+        },
+        autoLayout: {
+          enabled: false,
+          direction: 'row',
+          gap: 16,
+          padding: 20,
+          align: 'center',
         },
       };
     case 'rect':
@@ -133,6 +183,15 @@ export function createNodeFromTool(
           fill: 'brandPrimary',
           fillGradientFrom: 'brandPrimary',
           fillGradientTo: 'brandAccent',
+        },
+        prototype: {
+          entrance: 'none',
+          durationMs: 400,
+          delayMs: 0,
+          easing: 'spring',
+          hoverEffect: 'lift-glow',
+          clickAction: 'toast',
+          clickPayload: 'Action triggered',
         },
       };
     case 'glass':

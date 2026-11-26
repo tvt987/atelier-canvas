@@ -4,6 +4,7 @@ import {
   resolveArtboardBackground,
   resolveNodeStyle,
 } from './tokens';
+import { buildSvgPathData } from './bezier';
 
 function escapeXml(value: string): string {
   return value
@@ -62,20 +63,23 @@ function wrapTextLines(
 ): string[] {
   const avgCharW = fontSize * 0.56;
   const maxChars = Math.max(8, Math.floor(maxWidth / Math.max(4, avgCharW)));
-  const words = text.split(/\s+/);
+  const rawParagraphs = text.split('\n');
   const lines: string[] = [];
-  let current = '';
 
-  for (const word of words) {
-    const candidate = current ? `${current} ${word}` : word;
-    if (candidate.length > maxChars && current) {
-      lines.push(current);
-      current = word;
-    } else {
-      current = candidate;
+  for (const para of rawParagraphs) {
+    const words = para.split(/\s+/);
+    let current = '';
+    for (const word of words) {
+      const candidate = current ? `${current} ${word}` : word;
+      if (candidate.length > maxChars && current) {
+        lines.push(current);
+        current = word;
+      } else {
+        current = candidate;
+      }
     }
+    if (current) lines.push(current);
   }
-  if (current) lines.push(current);
   return lines;
 }
 
@@ -103,6 +107,31 @@ function renderNodeSvg(
     node.strokeWidth > 0
       ? ` stroke="${escapeXml(style.strokeColor)}" stroke-width="${node.strokeWidth}"`
       : '';
+
+  if (node.type === 'path' && node.pathData) {
+    const worldPts = node.pathData.points.map((pt) => ({
+      x: node.x + pt.x,
+      y: node.y + pt.y,
+    }));
+    const d = buildSvgPathData(
+      worldPts,
+      node.pathData.smooth !== false,
+      Boolean(node.pathData.closed),
+    );
+    const dashAttr =
+      node.pathData.dashStyle === 'dashed'
+        ? ' stroke-dasharray="8 6"'
+        : node.pathData.dashStyle === 'dotted'
+          ? ' stroke-dasharray="2 6"'
+          : '';
+    const arrowAttr = node.pathData.endArrow ? ' marker-end="url(#atelier-arrow)"' : '';
+    const glowFilter = node.pathData.glow ? ' filter="url(#shadow-neon)"' : filterAttr;
+    const strokePaint =
+      style.fill.kind === 'gradient'
+        ? fillPaint
+        : escapeXml(style.strokeColor || doc.tokens.brandAccent);
+    return `    <path d="${d}" fill="none" stroke="${strokePaint}" stroke-width="${Math.max(1.5, node.strokeWidth || 2.5)}" stroke-linecap="round" stroke-linejoin="round"${dashAttr}${arrowAttr}${opacityAttr}${glowFilter}${transformAttr} />`;
+  }
 
   if (node.type === 'ellipse') {
     return `    <ellipse cx="${cx.toFixed(1)}" cy="${cy.toFixed(1)}" rx="${(node.width / 2).toFixed(1)}" ry="${(node.height / 2).toFixed(1)}" fill="${fillPaint}"${strokeAttr}${opacityAttr}${filterAttr}${transformAttr} />`;
@@ -156,7 +185,6 @@ function renderNodeSvg(
     ].join('\n');
   }
 
-  // frame, rect, glass
   const rx = Math.min(style.radius, Math.min(node.width, node.height) / 2);
   return `    <rect x="${node.x.toFixed(1)}" y="${node.y.toFixed(1)}" width="${node.width.toFixed(1)}" height="${node.height.toFixed(1)}" rx="${rx}" fill="${fillPaint}"${strokeAttr}${opacityAttr}${filterAttr}${transformAttr} />`;
 }
@@ -168,6 +196,9 @@ export function exportArtboardToSvg(doc: DocumentState): string {
     `    <clipPath id="artboard-clip">`,
     `      <rect x="0" y="0" width="${artboard.width}" height="${artboard.height}" rx="${artboard.radius}" />`,
     `    </clipPath>`,
+    `    <marker id="atelier-arrow" viewBox="0 0 10 10" refX="7" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">`,
+    `      <path d="M 1 1 L 9 5 L 1 9 z" fill="${escapeXml(tokens.brandAccent)}" />`,
+    `    </marker>`,
     `    <filter id="shadow-subtle" x="-20%" y="-20%" width="140%" height="140%">`,
     `      <feDropShadow dx="0" dy="4" stdDeviation="8" flood-color="#000000" flood-opacity="0.22" />`,
     `    </filter>`,
@@ -199,6 +230,150 @@ ${defs.join('\n')}
 ${nodeMarkup}
   </g>
 </svg>
+`;
+}
+
+export function exportNodeToSvg(node: CanvasNode, doc: DocumentState): string {
+  const shiftedNode: CanvasNode = {
+    ...node,
+    x: 12,
+    y: 12,
+  };
+  const miniDoc: DocumentState = {
+    ...doc,
+    artboard: {
+      ...doc.artboard,
+      x: 0,
+      y: 0,
+      width: Math.round(node.width + 24),
+      height: Math.round(node.height + 24),
+      radius: 0,
+      background: { kind: 'none', color: 'transparent' },
+      tokenBinding: undefined,
+    },
+    nodes: [shiftedNode],
+  };
+  return exportArtboardToSvg(miniDoc);
+}
+
+export function exportArtboardToStandaloneHtml(doc: DocumentState): string {
+  const bg = resolveArtboardBackground(doc.artboard, doc.tokens);
+  const visibleNodes = doc.nodes.filter((n) => n.visible);
+
+  const nodesHtml = visibleNodes
+    .map((node) => {
+      const style = resolveNodeStyle(node, doc.tokens);
+      const proto = node.prototype;
+      const hoverClass =
+        proto && proto.hoverEffect !== 'none'
+          ? ` hover-${proto.hoverEffect}`
+          : '';
+      const easing =
+        proto?.easing === 'spring'
+          ? 'cubic-bezier(0.34,1.56,0.64,1)'
+          : proto?.easing === 'expo-out'
+            ? 'cubic-bezier(0.16,1,0.3,1)'
+            : 'ease-in-out';
+      const animStyle =
+        proto && proto.entrance !== 'none'
+          ? `animation:at-${proto.entrance} ${proto.durationMs}ms ${easing} ${proto.delayMs}ms ${proto.entrance === 'float-levitate' || proto.entrance === 'shimmer-glow' ? 'infinite' : 'both'};`
+          : '';
+      const toastAttr =
+        proto?.clickAction === 'toast'
+          ? ` data-toast="${escapeXml(proto.clickPayload || `${node.name} triggered`)}"`
+          : '';
+
+      if (node.type === 'path' && node.pathData) {
+        const d = buildSvgPathData(
+          node.pathData.points,
+          node.pathData.smooth !== false,
+          Boolean(node.pathData.closed),
+        );
+        const dash =
+          node.pathData.dashStyle === 'dashed'
+            ? ' stroke-dasharray="8 6"'
+            : node.pathData.dashStyle === 'dotted'
+              ? ' stroke-dasharray="2 6"'
+              : '';
+        return `    <svg class="node${hoverClass}" style="left:${node.x}px;top:${node.y}px;width:${node.width}px;height:${node.height}px;overflow:visible;${animStyle}" viewBox="0 0 ${node.width} ${node.height}" fill="none"><path d="${d}" stroke="${escapeXml(style.strokeColor)}" stroke-width="${Math.max(1.5, node.strokeWidth || 2.5)}" stroke-linecap="round" stroke-linejoin="round"${dash}/></svg>`;
+      }
+
+      const inlineCss = [
+        `left:${node.x}px`,
+        `top:${node.y}px`,
+        `width:${node.width}px`,
+        `height:${node.height}px`,
+        `border-radius:${style.radius}px`,
+        `opacity:${node.opacity}`,
+        node.type !== 'text' ? `background:${style.cssBackground}` : 'background:transparent',
+        node.strokeWidth > 0 ? `border:${node.strokeWidth}px solid ${style.strokeColor}` : '',
+        node.blur > 0 ? `backdrop-filter:blur(${node.blur}px);-webkit-backdrop-filter:blur(${node.blur}px)` : '',
+        style.boxShadow !== 'none' ? `box-shadow:${style.boxShadow}` : '',
+        node.rotation !== 0 ? `transform:rotate(${node.rotation}deg)` : '',
+        node.type === 'button' || node.type === 'text'
+          ? `color:${style.textColor};font-family:'${node.fontFamily ?? 'Inter'}',sans-serif;font-size:${node.fontSize ?? 14}px;font-weight:${node.fontWeight ?? 500};letter-spacing:${node.letterSpacing ?? 0}px;line-height:${node.lineHeight ?? 1.25};text-align:${node.textAlign ?? 'left'};display:flex;align-items:${node.type === 'button' ? 'center' : 'flex-start'};justify-content:${node.type === 'button' ? 'center' : node.textAlign === 'center' ? 'center' : node.textAlign === 'right' ? 'flex-end' : 'flex-start'}`
+          : '',
+        proto?.clickAction && proto.clickAction !== 'none' ? 'cursor:pointer' : '',
+        animStyle,
+      ]
+        .filter(Boolean)
+        .join(';');
+
+      const tag = node.type === 'button' ? 'button' : 'div';
+      const content =
+        node.type === 'text' || node.type === 'button'
+          ? escapeXml(node.text ?? '')
+          : '';
+      return `    <${tag} class="node${hoverClass}" style="${inlineCss}"${toastAttr}>${content}</${tag}>`;
+    })
+    .join('\n');
+
+  return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>${escapeXml(doc.artboard.name)} — Exported by Atelier Canvas v2</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@600&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500;600&family=Space+Grotesk:wght@600;700&display=swap" rel="stylesheet" />
+  <style>
+    *{box-sizing:border-box;margin:0;padding:0}
+    body{min-height:100vh;display:flex;align-items:center;justify-content:center;background:#08090D;font-family:'Inter',sans-serif;padding:32px}
+    .artboard{position:relative;overflow:hidden;width:${doc.artboard.width}px;height:${doc.artboard.height}px;border-radius:${doc.artboard.radius}px;background:${bg.cssBackground};box-shadow:0 32px 96px rgba(0,0,0,.55),0 0 0 1px rgba(255,255,255,.08)}
+    .node{position:absolute;border:none;white-space:pre-wrap}
+    .hover-lift-glow{transition:transform 220ms cubic-bezier(.22,1,.36,1),filter 220ms ease}
+    .hover-lift-glow:hover{transform:translateY(-3px) scale(1.015);filter:brightness(1.1)}
+    .hover-scale{transition:transform 200ms cubic-bezier(.22,1,.36,1)}
+    .hover-scale:hover{transform:scale(1.03)}
+    .hover-glass-tilt{transition:transform 260ms cubic-bezier(.22,1,.36,1)}
+    .hover-glass-tilt:hover{transform:perspective(600px) rotateX(2.5deg) rotateY(-2.5deg)}
+    @keyframes at-fade-up{from{opacity:0;transform:translateY(22px)}to{opacity:1;transform:translateY(0)}}
+    @keyframes at-spring-scale{0%{opacity:0;transform:scale(.84)}70%{opacity:1;transform:scale(1.03)}100%{opacity:1;transform:scale(1)}}
+    @keyframes at-slide-left{from{opacity:0;transform:translateX(28px)}to{opacity:1;transform:translateX(0)}}
+    @keyframes at-elastic-pop{0%{opacity:0;transform:scale(.72) translateY(10px)}65%{opacity:1;transform:scale(1.06)}100%{opacity:1;transform:scale(1)}}
+    @keyframes at-float-levitate{0%,100%{transform:translateY(0)}50%{transform:translateY(-6px)}}
+    @keyframes at-shimmer-glow{0%,100%{filter:brightness(1)}50%{filter:brightness(1.18)}}
+    #toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:#111318;color:#F8FAFC;border:1px solid rgba(6,182,212,.5);padding:10px 18px;border-radius:999px;font-family:'JetBrains Mono',monospace;font-size:12px;opacity:0;transition:opacity 200ms ease;pointer-events:none}
+    #toast.show{opacity:1}
+  </style>
+</head>
+<body>
+  <main class="artboard">
+${nodesHtml}
+  </main>
+  <div id="toast"></div>
+  <script>
+    const toast=document.getElementById('toast');let timer;
+    document.querySelectorAll('[data-toast]').forEach(el=>{
+      el.addEventListener('click',()=>{
+        toast.textContent=el.getAttribute('data-toast');
+        toast.classList.add('show');
+        clearTimeout(timer);timer=setTimeout(()=>toast.classList.remove('show'),2600);
+      });
+    });
+  </script>
+</body>
+</html>
 `;
 }
 

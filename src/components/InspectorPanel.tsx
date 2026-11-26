@@ -13,19 +13,33 @@ import {
   Code2,
   Copy,
   Download,
+  LayoutGrid,
   Palette,
+  PenTool,
+  Play,
+  ShieldCheck,
   Sliders,
+  Sparkles,
+  Wand2,
+  Zap,
 } from 'lucide-react';
 import type {
   Artboard,
+  AutoLayoutConfig,
   BlendMode,
   CanvasNode,
+  ClickAction,
   CodeFormat,
   ColorTokenKey,
+  DashStyle,
   DesignTokens,
   DocumentState,
+  EasingPreset,
+  EntranceAnimation,
   FillKind,
+  HoverEffect,
   InspectorTab,
+  PrototypeConfig,
   ShadowPreset,
   UiMode,
 } from '../types/canvas';
@@ -39,6 +53,11 @@ import {
   generateReactTailwind,
   generateTokensJson,
 } from '../engines/codegen';
+import {
+  auditNodeContrast,
+  autoFixContrastToAAA,
+} from '../engines/wcag';
+import { TEMPLATE_PRESETS } from '../engines/templates';
 import type { StudioLabels } from '../i18n/labels';
 
 export type AlignDirection =
@@ -55,11 +74,14 @@ interface InspectorPanelProps {
   uiMode: UiMode;
   activeTab: InspectorTab;
   onSetActiveTab: (tab: InspectorTab) => void;
+  onSelectIds: (ids: string[]) => void;
   onUpdateNode: (id: string, patch: Partial<CanvasNode>) => void;
+  onApplyAutoLayout: (frameId: string, config: AutoLayoutConfig) => void;
   onUpdateArtboard: (patch: Partial<Artboard>) => void;
   onUpdateTokens: (nextTokens: DesignTokens) => void;
   onAlignSelection: (dir: AlignDirection) => void;
   onOpenExportModal: () => void;
+  onOpenPrototypePlayer: () => void;
   labels: StudioLabels;
 }
 
@@ -90,6 +112,40 @@ const SHADOW_PRESETS: ShadowPreset[] = [
 ];
 
 const BLEND_MODES: BlendMode[] = ['normal', 'multiply', 'screen', 'overlay'];
+
+const ENTRANCE_OPTIONS: Array<{ value: EntranceAnimation; label: string }> = [
+  { value: 'none', label: 'None' },
+  { value: 'fade-up', label: 'Fade Up' },
+  { value: 'spring-scale', label: 'Spring Scale' },
+  { value: 'slide-left', label: 'Slide Left' },
+  { value: 'elastic-pop', label: 'Elastic Pop' },
+  { value: 'float-levitate', label: 'Float Levitate (Loop)' },
+  { value: 'shimmer-glow', label: 'Shimmer Glow (Loop)' },
+];
+
+const HOVER_OPTIONS: Array<{ value: HoverEffect; label: string }> = [
+  { value: 'none', label: 'None' },
+  { value: 'lift-glow', label: 'Lift + Glow' },
+  { value: 'scale', label: 'Scale 1.03' },
+  { value: 'glass-tilt', label: 'Glass 3D Tilt' },
+];
+
+const CLICK_OPTIONS: Array<{ value: ClickAction; label: string }> = [
+  { value: 'none', label: 'None' },
+  { value: 'toast', label: 'Show Interactive Toast' },
+  { value: 'pulse-target', label: 'Pulse Target Layer' },
+  { value: 'switch-template', label: 'Switch Template' },
+  { value: 'toggle-theme', label: 'Morph Next Brand Theme' },
+];
+
+const DEFAULT_PROTO: PrototypeConfig = {
+  entrance: 'none',
+  durationMs: 520,
+  delayMs: 0,
+  easing: 'spring',
+  hoverEffect: 'none',
+  clickAction: 'none',
+};
 
 function NumberField({
   label,
@@ -140,11 +196,14 @@ export function InspectorPanel({
   uiMode,
   activeTab,
   onSetActiveTab,
+  onSelectIds,
   onUpdateNode,
+  onApplyAutoLayout,
   onUpdateArtboard,
   onUpdateTokens,
   onAlignSelection,
   onOpenExportModal,
+  onOpenPrototypePlayer,
   labels,
 }: InspectorPanelProps) {
   const [codeFormat, setCodeFormat] = useState<CodeFormat>('react-tailwind');
@@ -163,18 +222,344 @@ export function InspectorPanel({
     [primary, doc.artboard],
   );
 
+  const wcagAudit = useMemo(
+    () => (primary ? auditNodeContrast(primary, doc) : null),
+    [primary, doc],
+  );
+
   const handleCopyCode = async () => {
     try {
       await navigator.clipboard.writeText(generatedCode);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1600);
     } catch {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1600);
+      // Ignore in restricted headless clipboards
     }
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1600);
   };
 
-  // DEV MODE Right Rail
+  const handleFixContrast = () => {
+    if (!primary || !wcagAudit) return;
+    const fixedHex = autoFixContrastToAAA(
+      wcagAudit.foregroundHex,
+      wcagAudit.backgroundHex,
+    );
+    onUpdateNode(primary.id, {
+      textColor: fixedHex,
+      tokenBinding: { ...primary.tokenBinding, textColor: undefined },
+    });
+  };
+
+  // PROTOTYPE MODE RIGHT RAIL
+  if (uiMode === 'prototype') {
+    const proto: PrototypeConfig = primary?.prototype ?? DEFAULT_PROTO;
+    const updateProto = (patch: Partial<PrototypeConfig>) => {
+      if (!primary) return;
+      onUpdateNode(primary.id, {
+        prototype: { ...proto, ...patch },
+      });
+    };
+
+    const activeFlows = doc.nodes.filter(
+      (n) =>
+        n.prototype &&
+        (n.prototype.entrance !== 'none' ||
+          n.prototype.hoverEffect !== 'none' ||
+          n.prototype.clickAction !== 'none'),
+    );
+
+    return (
+      <aside
+        data-testid="prototype-inspector"
+        className="w-72 lg:w-[300px] shrink-0 border-l flex flex-col select-none z-20"
+        style={{
+          backgroundColor: 'var(--studio-surface)',
+          borderColor: 'var(--studio-border)',
+        }}
+      >
+        <div
+          className="h-9 px-3 border-b flex items-center justify-between"
+          style={{ borderColor: 'var(--studio-border)' }}
+        >
+          <div className="flex items-center gap-1.5">
+            <Sparkles size={13} strokeWidth={1.6} className="text-emerald-400" />
+            <span className="font-mono-tech text-[11px] font-semibold uppercase tracking-wider">
+              {labels.prototypeInspector}
+            </span>
+          </div>
+          <span className="font-mono-tech text-[10px] text-emerald-400">
+            {activeFlows.length} flows
+          </span>
+        </div>
+
+        <div className="flex-1 overflow-y-auto studio-scroll p-3 space-y-3.5">
+          {primary ? (
+            <>
+              <div
+                className="px-2.5 py-2 rounded-lg border flex items-center justify-between"
+                style={{
+                  backgroundColor: 'var(--studio-surface-2)',
+                  borderColor: 'rgba(16, 185, 129, 0.35)',
+                }}
+              >
+                <span className="text-xs font-semibold truncate">{primary.name}</span>
+                <span className="font-mono-tech text-[9px] uppercase text-emerald-400">
+                  {primary.type}
+                </span>
+              </div>
+
+              {/* Entrance Choreography */}
+              <section className="space-y-2">
+                <div className="font-mono-tech text-[10px] uppercase tracking-wider" style={{ color: 'var(--studio-text-muted)' }}>
+                  Entrance Animation
+                </div>
+                <select
+                  data-testid="proto-entrance-select"
+                  value={proto.entrance}
+                  onChange={(e) =>
+                    updateProto({ entrance: e.target.value as EntranceAnimation })
+                  }
+                  className="w-full h-8 px-2 rounded-md border text-xs outline-none"
+                  style={{
+                    backgroundColor: 'var(--studio-surface-2)',
+                    borderColor: 'var(--studio-border)',
+                    color: 'var(--studio-text)',
+                  }}
+                >
+                  {ENTRANCE_OPTIONS.map((opt) => (
+                    <option key={opt.value} value={opt.value} className="bg-slate-900 text-white">
+                      {opt.label}
+                    </option>
+                  ))}
+                </select>
+                <div className="grid grid-cols-2 gap-1.5">
+                  <NumberField
+                    label="DUR"
+                    value={proto.durationMs}
+                    min={100}
+                    max={4000}
+                    onChange={(durationMs) =>
+                      updateProto({ durationMs: Math.max(100, durationMs) })
+                    }
+                  />
+                  <NumberField
+                    label="DLY"
+                    value={proto.delayMs}
+                    min={0}
+                    max={3000}
+                    onChange={(delayMs) =>
+                      updateProto({ delayMs: Math.max(0, delayMs) })
+                    }
+                  />
+                </div>
+                <div
+                  className="grid grid-cols-3 gap-1 p-0.5 rounded-lg border"
+                  style={{
+                    backgroundColor: 'var(--studio-surface-2)',
+                    borderColor: 'var(--studio-border)',
+                  }}
+                >
+                  {(
+                    [
+                      ['spring', 'Spring'],
+                      ['expo-out', 'Expo Out'],
+                      ['smooth', 'Smooth'],
+                    ] as const
+                  ).map(([val, lbl]) => (
+                    <button
+                      key={val}
+                      type="button"
+                      onClick={() => updateProto({ easing: val as EasingPreset })}
+                      className="h-6 rounded font-mono-tech text-[10px] cursor-pointer"
+                      style={{
+                        backgroundColor:
+                          proto.easing === val ? '#059669' : 'transparent',
+                        color:
+                          proto.easing === val
+                            ? '#FFFFFF'
+                            : 'var(--studio-text-secondary)',
+                      }}
+                    >
+                      {lbl}
+                    </button>
+                  ))}
+                </div>
+              </section>
+
+              {/* Hover Micro-Interaction */}
+              <section className="space-y-1.5 pt-2 border-t" style={{ borderColor: 'var(--studio-border)' }}>
+                <div className="font-mono-tech text-[10px] uppercase tracking-wider" style={{ color: 'var(--studio-text-muted)' }}>
+                  Hover State
+                </div>
+                <select
+                  data-testid="proto-hover-select"
+                  value={proto.hoverEffect}
+                  onChange={(e) =>
+                    updateProto({ hoverEffect: e.target.value as HoverEffect })
+                  }
+                  className="w-full h-8 px-2 rounded-md border text-xs outline-none"
+                  style={{
+                    backgroundColor: 'var(--studio-surface-2)',
+                    borderColor: 'var(--studio-border)',
+                    color: 'var(--studio-text)',
+                  }}
+                >
+                  {HOVER_OPTIONS.map((opt) => (
+                    <option key={opt.value} value={opt.value} className="bg-slate-900 text-white">
+                      {opt.label}
+                    </option>
+                  ))}
+                </select>
+              </section>
+
+              {/* Click Interaction Trigger */}
+              <section className="space-y-2 pt-2 border-t" style={{ borderColor: 'var(--studio-border)' }}>
+                <div className="font-mono-tech text-[10px] uppercase tracking-wider" style={{ color: 'var(--studio-text-muted)' }}>
+                  On Click Action
+                </div>
+                <select
+                  data-testid="proto-click-select"
+                  value={proto.clickAction}
+                  onChange={(e) =>
+                    updateProto({ clickAction: e.target.value as ClickAction })
+                  }
+                  className="w-full h-8 px-2 rounded-md border text-xs outline-none"
+                  style={{
+                    backgroundColor: 'var(--studio-surface-2)',
+                    borderColor: 'var(--studio-border)',
+                    color: 'var(--studio-text)',
+                  }}
+                >
+                  {CLICK_OPTIONS.map((opt) => (
+                    <option key={opt.value} value={opt.value} className="bg-slate-900 text-white">
+                      {opt.label}
+                    </option>
+                  ))}
+                </select>
+
+                {proto.clickAction === 'toast' && (
+                  <input
+                    type="text"
+                    value={proto.clickPayload ?? ''}
+                    onChange={(e) => updateProto({ clickPayload: e.target.value })}
+                    placeholder="Toast notification copy..."
+                    className="w-full h-8 px-2 rounded-md border text-xs outline-none"
+                    style={{
+                      backgroundColor: 'var(--studio-surface-2)',
+                      borderColor: 'var(--studio-border)',
+                      color: 'var(--studio-text)',
+                    }}
+                  />
+                )}
+
+                {proto.clickAction === 'pulse-target' && (
+                  <select
+                    value={proto.clickPayload ?? ''}
+                    onChange={(e) => updateProto({ clickPayload: e.target.value })}
+                    className="w-full h-8 px-2 rounded-md border text-xs outline-none"
+                    style={{
+                      backgroundColor: 'var(--studio-surface-2)',
+                      borderColor: 'var(--studio-border)',
+                      color: 'var(--studio-text)',
+                    }}
+                  >
+                    <option value="" className="bg-slate-900 text-white">
+                      Select target layer...
+                    </option>
+                    {doc.nodes
+                      .filter((n) => n.id !== primary.id)
+                      .map((n) => (
+                        <option key={n.id} value={n.id} className="bg-slate-900 text-white">
+                          {n.name}
+                        </option>
+                      ))}
+                  </select>
+                )}
+
+                {proto.clickAction === 'switch-template' && (
+                  <select
+                    value={proto.clickPayload ?? 'ai-saas-hero'}
+                    onChange={(e) => updateProto({ clickPayload: e.target.value })}
+                    className="w-full h-8 px-2 rounded-md border text-xs outline-none"
+                    style={{
+                      backgroundColor: 'var(--studio-surface-2)',
+                      borderColor: 'var(--studio-border)',
+                      color: 'var(--studio-text)',
+                    }}
+                  >
+                    {TEMPLATE_PRESETS.map((preset) => (
+                      <option key={preset.id} value={preset.id} className="bg-slate-900 text-white">
+                        {preset.code}. {preset.name}
+                      </option>
+                    ))}
+                  </select>
+                )}
+              </section>
+            </>
+          ) : (
+            <div className="space-y-2.5">
+              <div
+                className="p-2.5 rounded-lg border text-[11px] leading-relaxed"
+                style={{
+                  backgroundColor: 'var(--studio-surface-2)',
+                  borderColor: 'var(--studio-border)',
+                  color: 'var(--studio-text-secondary)',
+                }}
+              >
+                Click any layer on canvas to edit entrance choreography, spring hovers, and click flows — or pick an active flow below.
+              </div>
+
+              <div className="space-y-1.5">
+                <div className="font-mono-tech text-[10px] uppercase tracking-wider" style={{ color: 'var(--studio-text-muted)' }}>
+                  Active Prototype Flows
+                </div>
+                {activeFlows.map((flowNode) => (
+                  <button
+                    key={flowNode.id}
+                    type="button"
+                    onClick={() => onSelectIds([flowNode.id])}
+                    className="w-full p-2 rounded-lg border text-left hover:border-emerald-500/50 transition-colors cursor-pointer"
+                    style={{
+                      backgroundColor: 'var(--studio-surface-2)',
+                      borderColor: 'var(--studio-border)',
+                    }}
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-xs font-semibold truncate">{flowNode.name}</span>
+                      <Zap size={11} className="text-emerald-400 shrink-0" />
+                    </div>
+                    <div className="font-mono-tech text-[10px] mt-0.5 text-emerald-400/90 truncate">
+                      {flowNode.prototype?.entrance !== 'none'
+                        ? `${flowNode.prototype?.entrance} (${flowNode.prototype?.durationMs}ms)`
+                        : 'Static'}{' '}
+                      {flowNode.prototype?.clickAction !== 'none'
+                        ? `· Click: ${flowNode.prototype?.clickAction}`
+                        : ''}
+                    </div>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          <button
+            type="button"
+            data-testid="btn-launch-player-rail"
+            onClick={onOpenPrototypePlayer}
+            className="w-full h-9 rounded-lg text-xs font-semibold text-white flex items-center justify-center gap-2 cursor-pointer transition-opacity hover:opacity-95"
+            style={{
+              background: 'linear-gradient(135deg, #10B981, #0891B2)',
+              boxShadow: '0 4px 16px rgba(16, 185, 129, 0.32)',
+            }}
+          >
+            <Play size={13} fill="currentColor" />
+            <span>Launch Fullscreen Prototype</span>
+          </button>
+        </div>
+      </aside>
+    );
+  }
+
+  // DEV MODE RIGHT RAIL
   if (uiMode === 'dev') {
     return (
       <aside
@@ -196,7 +581,7 @@ export function InspectorPanel({
             </span>
           </div>
           <span
-            className="font-mono-tech text-[10px] px-1.5 py-0.5 rounded"
+            className="font-mono-tech text-[10px] px-1.5 py-0.5 rounded truncate max-w-[140px]"
             style={{
               backgroundColor: 'rgba(6, 182, 212, 0.14)',
               color: 'var(--studio-cyan)',
@@ -258,6 +643,48 @@ export function InspectorPanel({
             )}
           </div>
 
+          {/* WCAG 2.1 Contrast Readout in Dev Mode */}
+          {wcagAudit && (
+            <div
+              data-testid="dev-wcag-badge"
+              className="rounded-lg border p-2.5 flex items-center justify-between gap-2"
+              style={{
+                backgroundColor: 'var(--studio-surface-2)',
+                borderColor: 'var(--studio-border)',
+              }}
+            >
+              <div className="flex items-center gap-2">
+                <ShieldCheck
+                  size={14}
+                  className={
+                    wcagAudit.passesAAA
+                      ? 'text-emerald-400'
+                      : wcagAudit.passesAA
+                        ? 'text-cyan-400'
+                        : 'text-rose-400'
+                  }
+                />
+                <div className="font-mono-tech text-[10px]">
+                  <div className="font-semibold">
+                    WCAG {wcagAudit.ratioLabel} · {wcagAudit.grade}
+                  </div>
+                  <div style={{ color: 'var(--studio-text-muted)' }}>
+                    {wcagAudit.foregroundHex} on {wcagAudit.backgroundHex}
+                  </div>
+                </div>
+              </div>
+              {!wcagAudit.passesAAA && (
+                <button
+                  type="button"
+                  onClick={handleFixContrast}
+                  className="h-6 px-2 rounded bg-emerald-500/20 border border-emerald-500/40 text-emerald-300 font-mono-tech text-[9px] font-semibold cursor-pointer"
+                >
+                  Fix AAA
+                </button>
+              )}
+            </div>
+          )}
+
           {/* Code Format Switch */}
           <div
             className="grid grid-cols-3 p-0.5 rounded-lg border gap-0.5"
@@ -280,8 +707,7 @@ export function InspectorPanel({
                 onClick={() => setCodeFormat(fmt)}
                 className="h-7 rounded-md font-mono-tech text-[10px] font-semibold transition-colors cursor-pointer"
                 style={{
-                  backgroundColor:
-                    codeFormat === fmt ? '#0891B2' : 'transparent',
+                  backgroundColor: codeFormat === fmt ? '#0891B2' : 'transparent',
                   color:
                     codeFormat === fmt ? '#FFFFFF' : 'var(--studio-text-secondary)',
                 }}
@@ -336,14 +762,14 @@ export function InspectorPanel({
             }}
           >
             <Download size={13} strokeWidth={1.6} />
-            <span>Open Export Studio (SVG / 2x PNG / TSX)</span>
+            <span>Open Export Studio (SVG / 3x PNG / HTML)</span>
           </button>
         </div>
       </aside>
     );
   }
 
-  // DESIGN MODE Right Rail (Design Tab + Tokens Tab)
+  // DESIGN MODE RIGHT RAIL
   return (
     <aside
       data-testid="design-inspector"
@@ -353,7 +779,6 @@ export function InspectorPanel({
         borderColor: 'var(--studio-border)',
       }}
     >
-      {/* Top Tabs: Design / Tokens */}
       <div
         className="h-9 px-2 border-b grid grid-cols-2 gap-1 items-center"
         style={{ borderColor: 'var(--studio-border)' }}
@@ -394,7 +819,6 @@ export function InspectorPanel({
         </button>
       </div>
 
-      {/* TOKENS STUDIO TAB */}
       {activeTab === 'tokens' ? (
         <div className="flex-1 overflow-y-auto studio-scroll p-3 space-y-4">
           <section className="space-y-2">
@@ -471,9 +895,7 @@ export function InspectorPanel({
                       borderColor: 'var(--studio-border)',
                     }}
                   >
-                    <div className="min-w-0">
-                      <div className="font-mono-tech text-[10px] truncate">{meta.cssVar}</div>
-                    </div>
+                    <div className="font-mono-tech text-[10px] truncate">{meta.cssVar}</div>
                     <div className="flex items-center gap-1.5 shrink-0">
                       <span
                         className="font-mono-tech text-[10px] uppercase"
@@ -498,7 +920,6 @@ export function InspectorPanel({
                 );
               })}
 
-              {/* Global Radius Base Slider */}
               <div
                 className="p-2 rounded-md border space-y-1.5"
                 style={{
@@ -528,7 +949,6 @@ export function InspectorPanel({
           </section>
         </div>
       ) : (
-        /* DESIGN PROPERTIES TAB */
         <div className="flex-1 overflow-y-auto studio-scroll p-3 space-y-3.5">
           {/* 6-Way Align Toolbar */}
           <div className="space-y-1.5">
@@ -574,10 +994,8 @@ export function InspectorPanel({
             </div>
           </div>
 
-          {/* Selected Node Controls OR Artboard Frame Controls */}
           {primary ? (
             <>
-              {/* Layer Name */}
               <div>
                 <input
                   type="text"
@@ -651,6 +1069,251 @@ export function InspectorPanel({
                   />
                 </div>
               </section>
+
+              {/* AUTO-LAYOUT FLEX ENGINE PANEL (Frame nodes) */}
+              {primary.type === 'frame' && (
+                <section
+                  data-testid="autolayout-panel"
+                  className="space-y-2 pt-2 border-t"
+                  style={{ borderColor: 'var(--studio-border)' }}
+                >
+                  <div className="flex items-center justify-between">
+                    <span className="font-mono-tech text-[10px] uppercase tracking-wider flex items-center gap-1.5" style={{ color: 'var(--studio-cyan)' }}>
+                      <LayoutGrid size={11} />
+                      <span>{labels.autoLayoutSection}</span>
+                    </span>
+                    <button
+                      type="button"
+                      data-testid="btn-toggle-autolayout"
+                      onClick={() => {
+                        const cur = primary.autoLayout ?? {
+                          enabled: false,
+                          direction: 'row' as const,
+                          gap: 16,
+                          padding: 20,
+                          align: 'center' as const,
+                        };
+                        onApplyAutoLayout(primary.id, {
+                          ...cur,
+                          enabled: !cur.enabled,
+                        });
+                      }}
+                      className="h-5 px-2 rounded font-mono-tech text-[9px] font-semibold cursor-pointer"
+                      style={{
+                        backgroundColor: primary.autoLayout?.enabled
+                          ? '#059669'
+                          : 'var(--studio-surface-2)',
+                        color: primary.autoLayout?.enabled
+                          ? '#FFFFFF'
+                          : 'var(--studio-text-muted)',
+                      }}
+                    >
+                      {primary.autoLayout?.enabled ? 'ACTIVE' : 'ENABLE'}
+                    </button>
+                  </div>
+
+                  {primary.autoLayout?.enabled && (
+                    <div className="space-y-1.5">
+                      <div className="grid grid-cols-2 gap-1.5">
+                        {(['row', 'column'] as const).map((dir) => (
+                          <button
+                            key={dir}
+                            type="button"
+                            onClick={() =>
+                              onApplyAutoLayout(primary.id, {
+                                ...primary.autoLayout!,
+                                direction: dir,
+                              })
+                            }
+                            className="h-6 rounded border font-mono-tech text-[10px] uppercase cursor-pointer"
+                            style={{
+                              backgroundColor:
+                                primary.autoLayout?.direction === dir
+                                  ? 'var(--studio-accent)'
+                                  : 'var(--studio-surface-2)',
+                              borderColor: 'var(--studio-border)',
+                              color:
+                                primary.autoLayout?.direction === dir
+                                  ? '#FFFFFF'
+                                  : 'var(--studio-text-secondary)',
+                            }}
+                          >
+                            {dir}
+                          </button>
+                        ))}
+                      </div>
+                      <div className="grid grid-cols-2 gap-1.5">
+                        <NumberField
+                          label="GAP"
+                          value={primary.autoLayout.gap}
+                          min={0}
+                          max={80}
+                          onChange={(gap) =>
+                            onApplyAutoLayout(primary.id, {
+                              ...primary.autoLayout!,
+                              gap: Math.max(0, gap),
+                            })
+                          }
+                        />
+                        <NumberField
+                          label="PAD"
+                          value={primary.autoLayout.padding}
+                          min={0}
+                          max={80}
+                          onChange={(padding) =>
+                            onApplyAutoLayout(primary.id, {
+                              ...primary.autoLayout!,
+                              padding: Math.max(0, padding),
+                            })
+                          }
+                        />
+                      </div>
+                    </div>
+                  )}
+                </section>
+              )}
+
+              {/* VECTOR BEZIER PATH PANEL (Path nodes) */}
+              {primary.type === 'path' && primary.pathData && (
+                <section
+                  data-testid="path-panel"
+                  className="space-y-2 pt-2 border-t"
+                  style={{ borderColor: 'var(--studio-border)' }}
+                >
+                  <div className="font-mono-tech text-[10px] uppercase tracking-wider flex items-center gap-1.5" style={{ color: 'var(--studio-cyan)' }}>
+                    <PenTool size={11} />
+                    <span>{labels.vectorPathSection}</span>
+                  </div>
+                  <div className="grid grid-cols-3 gap-1">
+                    {(['solid', 'dashed', 'dotted'] as DashStyle[]).map((style) => (
+                      <button
+                        key={style}
+                        type="button"
+                        onClick={() =>
+                          onUpdateNode(primary.id, {
+                            pathData: { ...primary.pathData!, dashStyle: style },
+                          })
+                        }
+                        className="h-6 rounded border font-mono-tech text-[9px] uppercase cursor-pointer"
+                        style={{
+                          backgroundColor:
+                            (primary.pathData?.dashStyle ?? 'solid') === style
+                              ? 'var(--studio-accent)'
+                              : 'var(--studio-surface-2)',
+                          borderColor: 'var(--studio-border)',
+                          color:
+                            (primary.pathData?.dashStyle ?? 'solid') === style
+                              ? '#FFFFFF'
+                              : 'var(--studio-text-secondary)',
+                        }}
+                      >
+                        {style}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="grid grid-cols-3 gap-1">
+                    {(
+                      [
+                        ['smooth', 'Smooth'],
+                        ['endArrow', 'Arrow'],
+                        ['glow', 'Glow'],
+                      ] as const
+                    ).map(([key, lbl]) => {
+                      const active = Boolean(primary.pathData?.[key]);
+                      return (
+                        <button
+                          key={key}
+                          type="button"
+                          onClick={() =>
+                            onUpdateNode(primary.id, {
+                              pathData: { ...primary.pathData!, [key]: !active },
+                            })
+                          }
+                          className="h-6 rounded border font-mono-tech text-[9px] cursor-pointer"
+                          style={{
+                            backgroundColor: active
+                              ? 'rgba(6, 182, 212, 0.18)'
+                              : 'var(--studio-surface-2)',
+                            borderColor: active
+                              ? 'rgba(6, 182, 212, 0.5)'
+                              : 'var(--studio-border)',
+                            color: active
+                              ? 'var(--studio-cyan)'
+                              : 'var(--studio-text-muted)',
+                          }}
+                        >
+                          {lbl}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </section>
+              )}
+
+              {/* LIVE WCAG 2.1 CONTRAST AUDITOR (Text & Button nodes) */}
+              {wcagAudit && (
+                <section
+                  data-testid="wcag-auditor"
+                  className="p-2.5 rounded-lg border space-y-2"
+                  style={{
+                    backgroundColor: 'var(--studio-surface-2)',
+                    borderColor: wcagAudit.passesAAA
+                      ? 'rgba(16, 185, 129, 0.35)'
+                      : wcagAudit.passesAA
+                        ? 'rgba(6, 182, 212, 0.35)'
+                        : 'rgba(244, 63, 94, 0.45)',
+                  }}
+                >
+                  <div className="flex items-center justify-between">
+                    <span className="font-mono-tech text-[9px] uppercase tracking-wider flex items-center gap-1" style={{ color: 'var(--studio-text-muted)' }}>
+                      <ShieldCheck size={11} />
+                      <span>{labels.wcagSection}</span>
+                    </span>
+                    <span
+                      data-testid="wcag-grade"
+                      className="font-mono-tech text-[10px] font-bold px-1.5 py-0.5 rounded"
+                      style={{
+                        backgroundColor: wcagAudit.passesAAA
+                          ? 'rgba(16, 185, 129, 0.2)'
+                          : wcagAudit.passesAA
+                            ? 'rgba(6, 182, 212, 0.2)'
+                            : 'rgba(244, 63, 94, 0.2)',
+                        color: wcagAudit.passesAAA
+                          ? '#34D399'
+                          : wcagAudit.passesAA
+                            ? '#22D3EE'
+                            : '#FB7185',
+                      }}
+                    >
+                      {wcagAudit.ratioLabel} {wcagAudit.grade}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-1.5 font-mono-tech text-[10px]" style={{ color: 'var(--studio-text-secondary)' }}>
+                      <span
+                        className="w-3.5 h-3.5 rounded border border-white/25"
+                        style={{ backgroundColor: wcagAudit.foregroundHex }}
+                      />
+                      <span>on</span>
+                      <span
+                        className="w-3.5 h-3.5 rounded border border-white/25"
+                        style={{ backgroundColor: wcagAudit.backgroundHex }}
+                      />
+                    </div>
+                    {!wcagAudit.passesAAA && (
+                      <button
+                        type="button"
+                        data-testid="btn-wcag-autofix"
+                        onClick={handleFixContrast}
+                        className="h-6 px-2 rounded-md bg-emerald-500/20 border border-emerald-500/45 text-emerald-300 font-mono-tech text-[10px] font-semibold flex items-center gap-1 cursor-pointer hover:bg-emerald-500/30"
+                      >
+                        <Wand2 size={10} />
+                        <span>Auto-Fix AAA</span>
+                      </button>
+                    )}
+                  </div>
+                </section>
+              )}
 
               {/* Appearance & Glass Blur */}
               <section className="space-y-2 pt-2 border-t" style={{ borderColor: 'var(--studio-border)' }}>
@@ -735,8 +1398,8 @@ export function InspectorPanel({
                 </div>
               </section>
 
-              {/* Fill Controls (Solid / Gradient / None + Quick Swatches + Token Binding) */}
-              {primary.type !== 'text' && (
+              {/* Fill Controls */}
+              {primary.type !== 'text' && primary.type !== 'path' && (
                 <section className="space-y-2 pt-2 border-t" style={{ borderColor: 'var(--studio-border)' }}>
                   <div className="flex items-center justify-between">
                     <span className="font-mono-tech text-[10px] uppercase tracking-wider" style={{ color: 'var(--studio-text-muted)' }}>
@@ -909,7 +1572,6 @@ export function InspectorPanel({
                     </div>
                   )}
 
-                  {/* Quick Swatches */}
                   <div className="flex items-center gap-1.5 pt-0.5">
                     {QUICK_SWATCHES.map((hex) => (
                       <button
@@ -928,7 +1590,6 @@ export function InspectorPanel({
                     ))}
                   </div>
 
-                  {/* Semantic Token Bind Selector */}
                   <select
                     value={primary.tokenBinding?.fill ?? ''}
                     onChange={(e) => {
@@ -984,7 +1645,7 @@ export function InspectorPanel({
                     >
                       <input
                         type="color"
-                        value={primary.strokeColor.startsWith('#') ? primary.strokeColor : '#2A3147'}
+                        value={primary.strokeColor.startsWith('#') ? primary.strokeColor : '#06B6D4'}
                         onChange={(e) =>
                           onUpdateNode(primary.id, {
                             strokeColor: e.target.value,
@@ -1001,7 +1662,7 @@ export function InspectorPanel({
                 </section>
               )}
 
-              {/* Typography Controls (Text & Button) */}
+              {/* Typography Controls */}
               {(primary.type === 'text' || primary.type === 'button') && (
                 <section className="space-y-2 pt-2 border-t" style={{ borderColor: 'var(--studio-border)' }}>
                   <div className="font-mono-tech text-[10px] uppercase tracking-wider" style={{ color: 'var(--studio-text-muted)' }}>
@@ -1126,7 +1787,6 @@ export function InspectorPanel({
               )}
             </>
           ) : (
-            /* Artboard Frame Inspector when nothing or multiple selected */
             <div className="space-y-3">
               <div
                 className="p-2.5 rounded-lg border text-[11px] leading-relaxed"

@@ -1,6 +1,7 @@
 export type ToolType =
   | 'select'
   | 'hand'
+  | 'pen'
   | 'frame'
   | 'rect'
   | 'ellipse'
@@ -16,7 +17,8 @@ export type NodeType =
   | 'text'
   | 'button'
   | 'glass'
-  | 'line';
+  | 'line'
+  | 'path';
 
 export type FillKind = 'solid' | 'gradient' | 'none';
 
@@ -55,6 +57,58 @@ export interface TokenBinding {
   radius?: 'radiusBase';
 }
 
+export interface PathPoint {
+  x: number;
+  y: number;
+}
+
+export type DashStyle = 'solid' | 'dashed' | 'dotted';
+
+export interface PathConfig {
+  points: PathPoint[];
+  closed?: boolean;
+  smooth?: boolean;
+  dashStyle?: DashStyle;
+  endArrow?: boolean;
+  glow?: boolean;
+}
+
+export interface AutoLayoutConfig {
+  enabled: boolean;
+  direction: 'row' | 'column';
+  gap: number;
+  padding: number;
+  align: 'start' | 'center' | 'end';
+}
+
+export type EntranceAnimation =
+  | 'none'
+  | 'fade-up'
+  | 'spring-scale'
+  | 'slide-left'
+  | 'elastic-pop'
+  | 'float-levitate'
+  | 'shimmer-glow';
+
+export type EasingPreset = 'spring' | 'expo-out' | 'smooth';
+export type HoverEffect = 'none' | 'lift-glow' | 'scale' | 'glass-tilt';
+export type ClickAction =
+  | 'none'
+  | 'toast'
+  | 'pulse-target'
+  | 'switch-template'
+  | 'toggle-theme';
+
+export interface PrototypeConfig {
+  entrance: EntranceAnimation;
+  durationMs: number;
+  delayMs: number;
+  easing: EasingPreset;
+  hoverEffect: HoverEffect;
+  clickAction: ClickAction;
+  clickPayload?: string;
+}
+
 export interface CanvasNode {
   id: string;
   name: string;
@@ -83,6 +137,9 @@ export interface CanvasNode {
   textAlign?: TextAlign;
   textColor?: string;
   tokenBinding?: TokenBinding;
+  pathData?: PathConfig;
+  autoLayout?: AutoLayoutConfig;
+  prototype?: PrototypeConfig;
 }
 
 export interface Artboard {
@@ -123,6 +180,13 @@ export interface DocumentState {
   tokens: DesignTokens;
 }
 
+export interface DesignSnapshot {
+  id: string;
+  label: string;
+  timestamp: string;
+  doc: DocumentState;
+}
+
 export interface Viewport {
   x: number;
   y: number;
@@ -152,11 +216,13 @@ export interface SnapGuide {
   kind: 'align' | 'spacing';
 }
 
-export type UiMode = 'design' | 'dev';
+export type UiMode = 'design' | 'prototype' | 'dev';
 export type ChromeTheme = 'dark' | 'light';
 export type Locale = 'en' | 'vi';
 export type InspectorTab = 'design' | 'tokens';
+export type LeftRailTab = 'layers' | 'assets';
 export type CodeFormat = 'react-tailwind' | 'css' | 'tokens-json';
+export type DeviceFrameMode = 'studio' | 'macbook' | 'iphone';
 
 export interface CollaboratorCursor {
   id: string;

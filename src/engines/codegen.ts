@@ -3,6 +3,7 @@ import type {
   CanvasNode,
   DesignTokens,
   DocumentState,
+  PrototypeConfig,
   ShadowPreset,
 } from '../types/canvas';
 import {
@@ -10,6 +11,7 @@ import {
   resolveNodeStyle,
   tokensToW3CJson,
 } from './tokens';
+import { buildSvgPathData } from './bezier';
 
 export interface RedlineMeasurements {
   top: number;
@@ -73,12 +75,93 @@ function escapeJsxText(text: string): string {
   return text.replace(/\{/g, '&#123;').replace(/\}/g, '&#125;');
 }
 
+function hasMotion(proto?: PrototypeConfig): boolean {
+  if (!proto) return false;
+  return proto.entrance !== 'none' || proto.hoverEffect !== 'none';
+}
+
+function buildFramerMotionProps(proto?: PrototypeConfig): string {
+  if (!proto || !hasMotion(proto)) return '';
+  const parts: string[] = [];
+
+  switch (proto.entrance) {
+    case 'fade-up':
+      parts.push('initial={{ opacity: 0, y: 22 }}', 'animate={{ opacity: 1, y: 0 }}');
+      break;
+    case 'spring-scale':
+      parts.push('initial={{ opacity: 0, scale: 0.84 }}', 'animate={{ opacity: 1, scale: 1 }}');
+      break;
+    case 'slide-left':
+      parts.push('initial={{ opacity: 0, x: 28 }}', 'animate={{ opacity: 1, x: 0 }}');
+      break;
+    case 'elastic-pop':
+      parts.push('initial={{ opacity: 0, scale: 0.72, y: 10 }}', 'animate={{ opacity: 1, scale: 1, y: 0 }}');
+      break;
+    case 'float-levitate':
+      parts.push('animate={{ y: [0, -6, 0] }}');
+      break;
+    case 'shimmer-glow':
+      parts.push('animate={{ filter: ["brightness(1)", "brightness(1.18)", "brightness(1)"] }}');
+      break;
+    default:
+      break;
+  }
+
+  if (proto.hoverEffect === 'lift-glow') {
+    parts.push('whileHover={{ y: -3, scale: 1.015 }}');
+  } else if (proto.hoverEffect === 'scale') {
+    parts.push('whileHover={{ scale: 1.03 }}');
+  } else if (proto.hoverEffect === 'glass-tilt') {
+    parts.push('whileHover={{ y: -2, rotateX: 2.5, rotateY: -2.5 }}');
+  }
+
+  const dur = Number((proto.durationMs / 1000).toFixed(2));
+  const delay = Number((proto.delayMs / 1000).toFixed(2));
+  const repeat =
+    proto.entrance === 'float-levitate' || proto.entrance === 'shimmer-glow'
+      ? ', repeat: Infinity'
+      : '';
+  const ease =
+    proto.easing === 'spring'
+      ? `type: 'spring', stiffness: 320, damping: 24`
+      : proto.easing === 'expo-out'
+        ? `ease: [0.16, 1, 0.3, 1]`
+        : `ease: 'easeInOut'`;
+  parts.push(`transition={{ duration: ${dur}, delay: ${delay}, ${ease}${repeat} }}`);
+
+  return ' ' + parts.join(' ');
+}
+
 function buildNodeJsx(
   node: CanvasNode,
   tokens: DesignTokens,
   indent: string,
 ): string {
   const resolved = resolveNodeStyle(node, tokens);
+  const usesMotion = hasMotion(node.prototype);
+
+  if (node.type === 'path' && node.pathData) {
+    const d = buildSvgPathData(
+      node.pathData.points,
+      node.pathData.smooth !== false,
+      Boolean(node.pathData.closed),
+    );
+    const dash =
+      node.pathData.dashStyle === 'dashed'
+        ? ' strokeDasharray="8 6"'
+        : node.pathData.dashStyle === 'dotted'
+          ? ' strokeDasharray="2 6"'
+          : '';
+    const classes = [
+      'absolute overflow-visible',
+      `left-[${Math.round(node.x)}px]`,
+      `top-[${Math.round(node.y)}px]`,
+      `w-[${Math.round(node.width)}px]`,
+      `h-[${Math.round(node.height)}px]`,
+    ];
+    return `${indent}<svg className="${classes.join(' ')}" viewBox="0 0 ${Math.round(node.width)} ${Math.round(node.height)}" fill="none">\n${indent}  <path d="${d}" stroke="${resolved.strokeColor}" strokeWidth={${Math.max(1.5, node.strokeWidth || 2.5)}} strokeLinecap="round" strokeLinejoin="round"${dash} />\n${indent}</svg>`;
+  }
+
   const classes: string[] = [
     'absolute',
     `left-[${Math.round(node.x)}px]`,
@@ -159,13 +242,21 @@ function buildNodeJsx(
 
   const styleAttr =
     inlineEntries.length > 0 ? ` style={{ ${inlineEntries.join(', ')} }}` : '';
-  const tag = node.type === 'button' ? 'button' : 'div';
+  const motionAttrs = buildFramerMotionProps(node.prototype);
+  const tag =
+    node.type === 'button'
+      ? usesMotion
+        ? 'motion.button'
+        : 'button'
+      : usesMotion
+        ? 'motion.div'
+        : 'div';
   const classAttr = `className="${classes.join(' ')}"`;
 
   if ((node.type === 'text' || node.type === 'button') && node.text) {
-    return `${indent}<${tag} ${classAttr}${styleAttr}>\n${indent}  ${escapeJsxText(node.text)}\n${indent}</${tag}>`;
+    return `${indent}<${tag} ${classAttr}${styleAttr}${motionAttrs}>\n${indent}  ${escapeJsxText(node.text)}\n${indent}</${tag}>`;
   }
-  return `${indent}<${tag} aria-label="${node.name}" ${classAttr}${styleAttr} />`;
+  return `${indent}<${tag} aria-label="${node.name}" ${classAttr}${styleAttr}${motionAttrs} />`;
 }
 
 export function generateReactTailwind(
@@ -174,9 +265,13 @@ export function generateReactTailwind(
 ): string {
   if (selectedNode) {
     const compName = sanitizeComponentName(selectedNode.name);
+    const usesMotion = hasMotion(selectedNode.prototype);
+    const importLine = usesMotion
+      ? `import { motion } from 'framer-motion';\n\n`
+      : '';
     const jsx = buildNodeJsx(selectedNode, doc.tokens, '    ');
-    return `// Generated by Atelier Canvas — React 19 + Tailwind CSS v4
-export function ${compName}() {
+    return `// Generated by Atelier Canvas v2 — React 19 + Tailwind CSS v4${usesMotion ? ' + Framer Motion' : ''}
+${importLine}export function ${compName}() {
   return (
 ${jsx}
   );
@@ -187,6 +282,10 @@ ${jsx}
   const compName = sanitizeComponentName(doc.artboard.name);
   const bg = resolveArtboardBackground(doc.artboard, doc.tokens);
   const visibleNodes = doc.nodes.filter((n) => n.visible);
+  const anyMotion = visibleNodes.some((n) => hasMotion(n.prototype));
+  const importLine = anyMotion
+    ? `import { motion } from 'framer-motion';\n\n`
+    : '';
   const childrenJsx = visibleNodes
     .map((n) => buildNodeJsx(n, doc.tokens, '      '))
     .join('\n');
@@ -198,8 +297,8 @@ ${jsx}
   const artboardBgClass =
     bg.fill.kind === 'solid' ? ` bg-[${bg.fill.color}]` : '';
 
-  return `// Generated by Atelier Canvas — React 19 + Tailwind CSS v4
-export function ${compName}() {
+  return `// Generated by Atelier Canvas v2 — React 19 + Tailwind CSS v4${anyMotion ? ' + Framer Motion' : ''}
+${importLine}export function ${compName}() {
   return (
     <section
       className="relative overflow-hidden w-[${Math.round(doc.artboard.width)}px] h-[${Math.round(doc.artboard.height)}px] rounded-[${doc.artboard.radius}px]${artboardBgClass}"${artboardStyle}
@@ -209,6 +308,12 @@ ${childrenJsx}
   );
 }
 `;
+}
+
+function prototypeEasingToCss(easing: PrototypeConfig['easing']): string {
+  if (easing === 'spring') return 'cubic-bezier(0.34, 1.56, 0.64, 1)';
+  if (easing === 'expo-out') return 'cubic-bezier(0.16, 1, 0.3, 1)';
+  return 'ease-in-out';
 }
 
 export function generatePureCss(
@@ -243,10 +348,10 @@ export function generatePureCss(
       `  border-radius: ${style.radius}px;`,
       `  opacity: ${Number(selectedNode.opacity.toFixed(2))};`,
     ];
-    if (style.fill.kind !== 'none') {
+    if (style.fill.kind !== 'none' && selectedNode.type !== 'path') {
       lines.push(`  background: ${style.cssBackground};`);
     }
-    if (selectedNode.strokeWidth > 0) {
+    if (selectedNode.strokeWidth > 0 && selectedNode.type !== 'path') {
       lines.push(`  border: ${selectedNode.strokeWidth}px solid ${style.strokeColor};`);
     }
     if (selectedNode.blur > 0) {
@@ -264,7 +369,41 @@ export function generatePureCss(
       lines.push(`  font-size: ${selectedNode.fontSize ?? 14}px;`);
       lines.push(`  font-weight: ${selectedNode.fontWeight ?? 500};`);
     }
+    if (selectedNode.prototype && selectedNode.prototype.entrance !== 'none') {
+      const p = selectedNode.prototype;
+      const iter =
+        p.entrance === 'float-levitate' || p.entrance === 'shimmer-glow'
+          ? 'infinite'
+          : 'both';
+      lines.push(
+        `  animation: atelier-${p.entrance} ${p.durationMs}ms ${prototypeEasingToCss(p.easing)} ${p.delayMs}ms ${iter};`,
+      );
+    }
+    if (selectedNode.prototype && selectedNode.prototype.hoverEffect !== 'none') {
+      lines.push(`  transition: transform 220ms cubic-bezier(0.22, 1, 0.36, 1), filter 220ms ease;`);
+    }
     lines.push('}');
+
+    if (selectedNode.prototype && selectedNode.prototype.hoverEffect !== 'none') {
+      const hoverTransform =
+        selectedNode.prototype.hoverEffect === 'lift-glow'
+          ? 'translateY(-3px) scale(1.015)'
+          : selectedNode.prototype.hoverEffect === 'scale'
+            ? 'scale(1.03)'
+            : 'perspective(600px) rotateX(2.5deg) rotateY(-2.5deg)';
+      lines.push('', `.${cls}:hover {`, `  transform: ${hoverTransform};`, '}');
+    }
+
+    if (selectedNode.prototype && selectedNode.prototype.entrance !== 'none') {
+      lines.push(
+        '',
+        `@keyframes atelier-${selectedNode.prototype.entrance} {`,
+        `  from { opacity: 0; transform: translateY(18px) scale(0.96); }`,
+        `  to { opacity: 1; transform: translateY(0) scale(1); }`,
+        '}',
+      );
+    }
+
     return lines.join('\n') + '\n';
   }
 

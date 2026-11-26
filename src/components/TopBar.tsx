@@ -4,17 +4,21 @@ import {
   Code2,
   Command,
   Download,
+  History,
   Maximize2,
   Minus,
   Moon,
   PenTool,
+  Play,
   Plus,
   Redo2,
+  RotateCcw,
+  Sparkles,
   Sun,
   Undo2,
   Users,
 } from 'lucide-react';
-import type { ChromeTheme, Locale, UiMode } from '../types/canvas';
+import type { ChromeTheme, DesignSnapshot, Locale, UiMode } from '../types/canvas';
 import { TEMPLATE_PRESETS } from '../engines/templates';
 import type { StudioLabels } from '../i18n/labels';
 
@@ -23,6 +27,10 @@ interface TopBarProps {
   onSelectTemplate: (templateId: string) => void;
   uiMode: UiMode;
   onSetUiMode: (mode: UiMode) => void;
+  onOpenPrototypePlayer: () => void;
+  snapshots: DesignSnapshot[];
+  onSaveSnapshot: (label?: string) => void;
+  onRestoreSnapshot: (snapshotId: string) => void;
   zoom: number;
   onZoomIn: () => void;
   onZoomOut: () => void;
@@ -49,6 +57,10 @@ export function TopBar({
   onSelectTemplate,
   uiMode,
   onSetUiMode,
+  onOpenPrototypePlayer,
+  snapshots,
+  onSaveSnapshot,
+  onRestoreSnapshot,
   zoom,
   onZoomIn,
   onZoomOut,
@@ -70,7 +82,10 @@ export function TopBar({
   labels,
 }: TopBarProps) {
   const [templateMenuOpen, setTemplateMenuOpen] = useState(false);
+  const [snapshotsOpen, setSnapshotsOpen] = useState(false);
+  const [snapshotDraft, setSnapshotDraft] = useState('');
   const menuRef = useRef<HTMLDivElement>(null);
+  const snapRef = useRef<HTMLDivElement>(null);
 
   const activeTemplate =
     TEMPLATE_PRESETS.find((t) => t.id === templateId) ?? TEMPLATE_PRESETS[0];
@@ -80,6 +95,9 @@ export function TopBar({
       if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
         setTemplateMenuOpen(false);
       }
+      if (snapRef.current && !snapRef.current.contains(e.target as Node)) {
+        setSnapshotsOpen(false);
+      }
     };
     window.addEventListener('mousedown', handleOutside);
     return () => window.removeEventListener('mousedown', handleOutside);
@@ -87,40 +105,50 @@ export function TopBar({
 
   return (
     <header
-      className="h-12 shrink-0 flex items-center justify-between gap-2 px-3 border-b select-none z-40"
+      className="h-12 shrink-0 flex items-center justify-between gap-2 px-2.5 border-b select-none z-40"
       style={{
         backgroundColor: 'var(--studio-surface)',
         borderColor: 'var(--studio-border)',
       }}
     >
-      {/* Left: Brand Identity + Template Selector + History */}
-      <div className="flex items-center gap-2 min-w-0">
-        <div className="flex items-center gap-2 pr-2 border-r" style={{ borderColor: 'var(--studio-border)' }}>
+      {/* Left: Brand Identity + Template Selector + Undo/Redo */}
+      <div className="flex items-center gap-1.5 min-w-0">
+        <div
+          className="flex items-center gap-2 pr-2 border-r shrink-0"
+          style={{ borderColor: 'var(--studio-border)' }}
+        >
           <div
             className="w-7 h-7 rounded-md flex items-center justify-center border shrink-0"
             style={{
-              background: 'linear-gradient(135deg, rgba(99,102,241,0.22), rgba(6,182,212,0.16))',
+              background:
+                'linear-gradient(135deg, rgba(99,102,241,0.22), rgba(6,182,212,0.16))',
               borderColor: 'rgba(99,102,241,0.45)',
             }}
           >
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
               <rect x="3" y="3" width="18" height="18" rx="4" stroke="#6366F1" strokeWidth="1.8" />
-              <path d="M8 16L12 7L16 16M9.6 13H14.4" stroke="#06B6D4" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+              <path
+                d="M8 16L12 7L16 16M9.6 13H14.4"
+                stroke="#06B6D4"
+                strokeWidth="1.8"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
             </svg>
           </div>
-          <div className="hidden sm:flex items-baseline gap-1.5">
-            <span className="font-display font-bold text-[13px] tracking-[0.06em]">
+          <div className="hidden sm:flex items-baseline gap-1">
+            <span className="font-display font-bold text-[12px] tracking-[0.07em]">
               ATELIER
             </span>
             <span
-              className="font-mono-tech text-[10px] font-medium px-1.5 py-0.5 rounded border"
+              className="font-mono-tech text-[9px] font-semibold px-1 py-0.5 rounded border"
               style={{
                 color: 'var(--studio-cyan)',
                 borderColor: 'var(--studio-border-strong)',
                 backgroundColor: 'var(--studio-surface-2)',
               }}
             >
-              CANVAS
+              v2
             </span>
           </div>
         </div>
@@ -131,7 +159,7 @@ export function TopBar({
             type="button"
             data-testid="template-switcher"
             onClick={() => setTemplateMenuOpen((v) => !v)}
-            className="h-8 px-2.5 rounded-md border flex items-center gap-2 text-xs font-medium transition-colors cursor-pointer"
+            className="h-8 px-2 rounded-md border flex items-center gap-1.5 text-[11px] font-medium transition-colors cursor-pointer"
             style={{
               backgroundColor: 'var(--studio-surface-2)',
               borderColor: templateMenuOpen ? 'var(--studio-accent)' : 'var(--studio-border)',
@@ -139,15 +167,15 @@ export function TopBar({
             }}
           >
             <span
-              className="w-2.5 h-2.5 rounded-full shrink-0"
+              className="w-2 h-2 rounded-full shrink-0"
               style={{
                 background: `linear-gradient(135deg, ${activeTemplate.accentSwatch[0]}, ${activeTemplate.accentSwatch[1]})`,
               }}
             />
-            <span className="truncate max-w-[140px] lg:max-w-[190px]">
+            <span className="truncate max-w-[110px] xl:max-w-[165px]">
               {activeTemplate.code}. {activeTemplate.name}
             </span>
-            <ChevronDown size={13} strokeWidth={1.5} style={{ color: 'var(--studio-text-muted)' }} />
+            <ChevronDown size={12} strokeWidth={1.5} style={{ color: 'var(--studio-text-muted)' }} />
           </button>
 
           {templateMenuOpen && (
@@ -214,7 +242,7 @@ export function TopBar({
         </div>
 
         {/* Undo / Redo */}
-        <div className="hidden md:flex items-center gap-0.5 pl-1">
+        <div className="hidden md:flex items-center gap-0.5">
           <button
             type="button"
             data-testid="btn-undo"
@@ -238,10 +266,125 @@ export function TopBar({
             <Redo2 size={14} strokeWidth={1.5} />
           </button>
         </div>
+
+        {/* Design Version Snapshots Popover */}
+        <div className="relative hidden lg:block" ref={snapRef}>
+          <button
+            type="button"
+            data-testid="btn-snapshots"
+            onClick={() => setSnapshotsOpen((v) => !v)}
+            title="Design Version Snapshots"
+            className="h-7 px-2 rounded-md border flex items-center gap-1.5 text-[10px] font-mono-tech transition-colors cursor-pointer"
+            style={{
+              backgroundColor: snapshotsOpen
+                ? 'var(--studio-accent-soft)'
+                : 'var(--studio-surface-2)',
+              borderColor: snapshotsOpen ? 'var(--studio-accent)' : 'var(--studio-border)',
+              color: snapshotsOpen ? 'var(--studio-accent)' : 'var(--studio-text-secondary)',
+            }}
+          >
+            <History size={12} strokeWidth={1.5} />
+            <span className="hidden xl:inline">{labels.snapshotsBtn}</span>
+            <span
+              className="px-1 rounded text-[9px] font-semibold"
+              style={{
+                backgroundColor: 'var(--studio-surface)',
+                color: 'var(--studio-cyan)',
+              }}
+            >
+              {snapshots.length}
+            </span>
+          </button>
+
+          {snapshotsOpen && (
+            <div
+              data-testid="snapshots-popover"
+              className="absolute left-0 top-9 w-72 rounded-xl border p-2.5 shadow-2xl z-50 space-y-2"
+              style={{
+                backgroundColor: 'var(--studio-surface)',
+                borderColor: 'var(--studio-border-strong)',
+              }}
+            >
+              <div className="flex items-center justify-between">
+                <span className="font-mono-tech text-[10px] uppercase tracking-wider" style={{ color: 'var(--studio-text-muted)' }}>
+                  Version Milestones
+                </span>
+                <span className="font-mono-tech text-[9px]" style={{ color: 'var(--studio-cyan)' }}>
+                  {snapshots.length} saved
+                </span>
+              </div>
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  onSaveSnapshot(snapshotDraft.trim() || undefined);
+                  setSnapshotDraft('');
+                }}
+                className="flex gap-1.5"
+              >
+                <input
+                  type="text"
+                  data-testid="snapshot-label-input"
+                  value={snapshotDraft}
+                  onChange={(e) => setSnapshotDraft(e.target.value)}
+                  placeholder="Milestone name (e.g. v2.1 Hero)..."
+                  className="flex-1 h-7 px-2 rounded-md border text-[11px] outline-none"
+                  style={{
+                    backgroundColor: 'var(--studio-surface-2)',
+                    borderColor: 'var(--studio-border)',
+                    color: 'var(--studio-text)',
+                  }}
+                />
+                <button
+                  type="submit"
+                  data-testid="btn-save-snapshot"
+                  className="h-7 px-2.5 rounded-md text-[10px] font-semibold text-white cursor-pointer"
+                  style={{ backgroundColor: 'var(--studio-accent)' }}
+                >
+                  Save
+                </button>
+              </form>
+              <div className="max-h-48 overflow-y-auto studio-scroll space-y-1">
+                {snapshots.map((snap) => (
+                  <div
+                    key={snap.id}
+                    className="px-2 py-1.5 rounded-lg border flex items-center justify-between gap-2"
+                    style={{
+                      backgroundColor: 'var(--studio-surface-2)',
+                      borderColor: 'var(--studio-border)',
+                    }}
+                  >
+                    <div className="min-w-0">
+                      <div className="text-[11px] font-semibold truncate">{snap.label}</div>
+                      <div className="font-mono-tech text-[9px]" style={{ color: 'var(--studio-text-muted)' }}>
+                        {snap.timestamp} · {snap.doc.nodes.length} layers
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      data-testid={`restore-snapshot-${snap.id}`}
+                      onClick={() => {
+                        onRestoreSnapshot(snap.id);
+                        setSnapshotsOpen(false);
+                      }}
+                      className="h-6 px-2 rounded border text-[10px] font-mono-tech flex items-center gap-1 hover:bg-white/10 cursor-pointer shrink-0"
+                      style={{
+                        borderColor: 'var(--studio-border-strong)',
+                        color: 'var(--studio-cyan)',
+                      }}
+                    >
+                      <RotateCcw size={10} />
+                      <span>Restore</span>
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
       </div>
 
-      {/* Center: DESIGN / DEV MODE Toggle + Zoom Pill */}
-      <div className="flex items-center gap-2">
+      {/* Center: 3-Mode Switcher (DESIGN | PROTOTYPE | DEV MODE) + Present + Zoom */}
+      <div className="flex items-center gap-1.5">
         <div
           className="h-8 p-0.5 rounded-lg border flex items-center gap-0.5"
           style={{
@@ -253,33 +396,67 @@ export function TopBar({
             type="button"
             data-testid="mode-design"
             onClick={() => onSetUiMode('design')}
-            className="h-full px-2.5 rounded-md text-[11px] font-mono-tech font-semibold tracking-wider flex items-center gap-1.5 transition-all cursor-pointer"
+            title="Design Mode (Shift+1)"
+            className="h-full px-2 rounded-md text-[10px] font-mono-tech font-semibold tracking-wider flex items-center gap-1 transition-all cursor-pointer"
             style={{
               backgroundColor: uiMode === 'design' ? 'var(--studio-accent)' : 'transparent',
               color: uiMode === 'design' ? '#FFFFFF' : 'var(--studio-text-secondary)',
             }}
           >
-            <PenTool size={12} strokeWidth={1.7} />
+            <PenTool size={11} strokeWidth={1.7} />
             <span>{labels.designMode}</span>
+          </button>
+          <button
+            type="button"
+            data-testid="mode-prototype"
+            onClick={() => onSetUiMode('prototype')}
+            title="Prototype & Motion Mode (Shift+2)"
+            className="h-full px-2 rounded-md text-[10px] font-mono-tech font-semibold tracking-wider flex items-center gap-1 transition-all cursor-pointer"
+            style={{
+              backgroundColor: uiMode === 'prototype' ? '#059669' : 'transparent',
+              color: uiMode === 'prototype' ? '#FFFFFF' : 'var(--studio-text-secondary)',
+            }}
+          >
+            <Sparkles size={11} strokeWidth={1.7} />
+            <span>{labels.prototypeMode}</span>
           </button>
           <button
             type="button"
             data-testid="mode-dev"
             onClick={() => onSetUiMode('dev')}
-            className="h-full px-2.5 rounded-md text-[11px] font-mono-tech font-semibold tracking-wider flex items-center gap-1.5 transition-all cursor-pointer"
+            title="Dev Mode & Codegen (Shift+3)"
+            className="h-full px-2 rounded-md text-[10px] font-mono-tech font-semibold tracking-wider flex items-center gap-1 transition-all cursor-pointer"
             style={{
               backgroundColor: uiMode === 'dev' ? '#0891B2' : 'transparent',
               color: uiMode === 'dev' ? '#FFFFFF' : 'var(--studio-text-secondary)',
             }}
           >
-            <Code2 size={12} strokeWidth={1.7} />
+            <Code2 size={11} strokeWidth={1.7} />
             <span>{labels.devMode}</span>
           </button>
         </div>
 
+        {/* Present Interactive Prototype CTA */}
+        <button
+          type="button"
+          data-testid="btn-present"
+          onClick={onOpenPrototypePlayer}
+          title="Launch Fullscreen Interactive Prototype Player"
+          className="h-8 px-2.5 rounded-lg border text-[11px] font-semibold flex items-center gap-1.5 transition-all cursor-pointer shrink-0"
+          style={{
+            background:
+              'linear-gradient(135deg, rgba(16,185,129,0.22), rgba(6,182,212,0.18))',
+            borderColor: 'rgba(16,185,129,0.52)',
+            color: '#34D399',
+          }}
+        >
+          <Play size={11} fill="currentColor" strokeWidth={1.6} />
+          <span className="hidden sm:inline">{labels.presentBtn}</span>
+        </button>
+
         {/* Zoom Controls */}
         <div
-          className="hidden lg:flex items-center h-8 rounded-lg border px-1 gap-0.5"
+          className="hidden xl:flex items-center h-8 rounded-lg border px-1 gap-0.5"
           style={{
             backgroundColor: 'var(--studio-surface-2)',
             borderColor: 'var(--studio-border)',
@@ -292,13 +469,13 @@ export function TopBar({
             className="w-6 h-6 rounded flex items-center justify-center cursor-pointer hover:bg-white/5"
             style={{ color: 'var(--studio-text-secondary)' }}
           >
-            <Minus size={12} strokeWidth={1.5} />
+            <Minus size={11} strokeWidth={1.5} />
           </button>
           <button
             type="button"
             onClick={onZoomReset}
             title="Reset 100%"
-            className="px-1.5 h-6 rounded font-mono-tech text-[11px] font-medium cursor-pointer hover:bg-white/5"
+            className="px-1 h-6 rounded font-mono-tech text-[10px] font-medium cursor-pointer hover:bg-white/5"
             style={{ color: 'var(--studio-text)' }}
           >
             {Math.round(zoom * 100)}%
@@ -310,31 +487,30 @@ export function TopBar({
             className="w-6 h-6 rounded flex items-center justify-center cursor-pointer hover:bg-white/5"
             style={{ color: 'var(--studio-text-secondary)' }}
           >
-            <Plus size={12} strokeWidth={1.5} />
+            <Plus size={11} strokeWidth={1.5} />
           </button>
-          <div className="w-px h-4 mx-0.5" style={{ backgroundColor: 'var(--studio-border)' }} />
+          <div className="w-px h-3.5 mx-0.5" style={{ backgroundColor: 'var(--studio-border)' }} />
           <button
             type="button"
             onClick={onFitToScreen}
-            title="Fit to Screen (Shift+1)"
-            className="px-1.5 h-6 rounded text-[11px] font-medium flex items-center gap-1 cursor-pointer hover:bg-white/5"
+            title="Fit to Screen (Shift+0)"
+            className="px-1 h-6 rounded text-[10px] font-medium flex items-center gap-1 cursor-pointer hover:bg-white/5"
             style={{ color: 'var(--studio-text-secondary)' }}
           >
-            <Maximize2 size={11} strokeWidth={1.5} />
+            <Maximize2 size={10} strokeWidth={1.5} />
             <span>{labels.fitScreen}</span>
           </button>
         </div>
       </div>
 
-      {/* Right: Multiplayer Presence, CMD+K, Locale, Theme, Export */}
-      <div className="flex items-center gap-1.5">
-        {/* Presence Avatars + Simulate Co-Designer */}
+      {/* Right: Presence, CMD+K, Locale, Theme, Export */}
+      <div className="flex items-center gap-1">
         <button
           type="button"
           data-testid="btn-co-designer"
           onClick={onToggleCoDesigner}
           title={`Yjs CRDT Room (${crdtRevisions} ops) — Click to toggle live Co-Designer`}
-          className="hidden xl:flex items-center gap-2 h-8 px-2 rounded-lg border text-[11px] font-medium transition-colors cursor-pointer"
+          className="hidden 2xl:flex items-center gap-1.5 h-8 px-2 rounded-lg border text-[11px] font-medium transition-colors cursor-pointer"
           style={{
             backgroundColor: coDesignerActive
               ? 'rgba(6, 182, 212, 0.14)'
@@ -359,13 +535,31 @@ export function TopBar({
           <span>{coDesignerActive ? labels.coDesignerLive : labels.simulateCoDesigner}</span>
         </button>
 
-        {/* CMD+K Trigger */}
+        <button
+          type="button"
+          data-testid="btn-co-designer-compact"
+          onClick={onToggleCoDesigner}
+          title={`Yjs CRDT (${crdtRevisions} ops) — Simulate Co-Designer`}
+          className="2xl:hidden w-8 h-8 rounded-lg border flex items-center justify-center transition-colors cursor-pointer"
+          style={{
+            backgroundColor: coDesignerActive
+              ? 'rgba(6, 182, 212, 0.14)'
+              : 'var(--studio-surface-2)',
+            borderColor: coDesignerActive
+              ? 'rgba(6, 182, 212, 0.5)'
+              : 'var(--studio-border)',
+            color: coDesignerActive ? 'var(--studio-cyan)' : 'var(--studio-text-secondary)',
+          }}
+        >
+          <Users size={13} strokeWidth={1.5} />
+        </button>
+
         <button
           type="button"
           data-testid="btn-cmdk"
           onClick={onOpenCommandBar}
           title="AI Command Palette (Ctrl+K)"
-          className="h-8 px-2 rounded-lg border flex items-center gap-1.5 text-[11px] font-mono-tech transition-colors cursor-pointer"
+          className="h-8 px-2 rounded-lg border flex items-center gap-1 text-[10px] font-mono-tech transition-colors cursor-pointer"
           style={{
             backgroundColor: 'var(--studio-surface-2)',
             borderColor: 'var(--studio-border)',
@@ -376,7 +570,6 @@ export function TopBar({
           <span className="hidden sm:inline">K</span>
         </button>
 
-        {/* EN / VI Locale Toggle */}
         <button
           type="button"
           data-testid="btn-locale"
@@ -392,7 +585,6 @@ export function TopBar({
           {locale.toUpperCase()}
         </button>
 
-        {/* Light / Dark View Transitions Toggle */}
         <button
           type="button"
           data-testid="btn-theme-chrome"
@@ -412,18 +604,17 @@ export function TopBar({
           )}
         </button>
 
-        {/* Export Studio Button */}
         <button
           type="button"
           data-testid="btn-export-open"
           onClick={onOpenExportModal}
-          className="h-8 px-3 rounded-lg text-xs font-semibold text-white flex items-center gap-1.5 transition-opacity hover:opacity-95 cursor-pointer shrink-0"
+          className="h-8 px-2.5 rounded-lg text-[11px] font-semibold text-white flex items-center gap-1.5 transition-opacity hover:opacity-95 cursor-pointer shrink-0"
           style={{
             background: 'linear-gradient(135deg, #6366F1, #4F46E5)',
             boxShadow: '0 2px 12px rgba(99, 102, 241, 0.35)',
           }}
         >
-          <Download size={13} strokeWidth={1.8} />
+          <Download size={12} strokeWidth={1.8} />
           <span>{labels.exportBtn}</span>
         </button>
       </div>

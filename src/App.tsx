@@ -1,11 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type {
   Artboard,
+  AutoLayoutConfig,
   CanvasNode,
   ChromeTheme,
+  DesignSnapshot,
   DesignTokens,
   DocumentState,
   InspectorTab,
+  LeftRailTab,
   Locale,
   ToolType,
   UiMode,
@@ -34,18 +37,24 @@ import {
   createGeneratedNodesForCommand,
   resolveThemeCommand,
 } from './engines/commands';
+import { applyAutoLayoutToFrame } from './engines/autolayout';
+import { instantiateAssetKitItem } from './engines/assets';
+import { generateReactTailwind } from './engines/codegen';
+import { exportNodeToSvg } from './engines/exporter';
 import { LABELS } from './i18n/labels';
 import { TopBar } from './components/TopBar';
 import { ToolDock } from './components/ToolDock';
 import { LayersPanel } from './components/LayersPanel';
-import { CanvasStage } from './components/CanvasStage';
+import { CanvasStage, type ContextMenuAction } from './components/CanvasStage';
 import { InspectorPanel, type AlignDirection } from './components/InspectorPanel';
 import { CommandPalette } from './components/CommandPalette';
 import { ExportModal } from './components/ExportModal';
+import { PrototypePlayerModal } from './components/PrototypePlayerModal';
 
 const TOOL_HOTKEYS: Record<string, ToolType> = {
   v: 'select',
   h: 'hand',
+  p: 'pen',
   f: 'frame',
   r: 'rect',
   o: 'ellipse',
@@ -66,10 +75,23 @@ function isEditableTarget(target: EventTarget | null): boolean {
   );
 }
 
+function formatClock(): string {
+  const now = new Date();
+  return now.toTimeString().slice(0, 5);
+}
+
 export function App() {
   const [history, setHistory] = useState<HistoryState<DocumentState>>(() =>
     createHistory(createDocumentByTemplateId('fintech-spatial')),
   );
+  const [snapshots, setSnapshots] = useState<DesignSnapshot[]>(() => [
+    {
+      id: 'snap-initial',
+      label: 'v2.0 Initial FinTech',
+      timestamp: formatClock(),
+      doc: createDocumentByTemplateId('fintech-spatial'),
+    },
+  ]);
   const [liveNodesOverride, setLiveNodesOverride] = useState<CanvasNode[] | null>(
     null,
   );
@@ -77,16 +99,19 @@ export function App() {
   const [activeTool, setActiveTool] = useState<ToolType>('select');
   const [uiMode, setUiMode] = useState<UiMode>('design');
   const [inspectorTab, setInspectorTab] = useState<InspectorTab>('design');
+  const [leftTab, setLeftTab] = useState<LeftRailTab>('layers');
   const [chromeTheme, setChromeTheme] = useState<ChromeTheme>('dark');
   const [locale, setLocale] = useState<Locale>('en');
   const [layersOpen, setLayersOpen] = useState(true);
   const [spacePressed, setSpacePressed] = useState(false);
   const [commandOpen, setCommandOpen] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
+  const [playerOpen, setPlayerOpen] = useState(false);
   const [coDesignerActive, setCoDesignerActive] = useState(false);
   const [coDesignerStep, setCoDesignerStep] = useState(0);
   const [crdtRevisions, setCrdtRevisions] = useState(1);
   const [crdtSynced, setCrdtSynced] = useState(true);
+  const [studioNotice, setStudioNotice] = useState<string | null>(null);
 
   const stageSizeRef = useRef({ width: 960, height: 640 });
   const hasCenteredInitialRef = useRef(false);
@@ -105,6 +130,13 @@ export function App() {
   );
 
   const labels = LABELS[locale];
+
+  const notify = useCallback((msg: string) => {
+    setStudioNotice(msg);
+    window.setTimeout(() => {
+      setStudioNotice((prev) => (prev === msg ? null : prev));
+    }, 2400);
+  }, []);
 
   // Initialize Yjs CRDT multiplayer room
   useEffect(() => {
@@ -129,14 +161,12 @@ export function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Broadcast local committed document mutations into Yjs CRDT room
   useEffect(() => {
     if (suppressBroadcastRef.current || !roomRef.current) return;
     roomRef.current.pushLocalDocument(committedDoc);
     setCrdtRevisions(roomRef.current.getTelemetry().revisionCount);
   }, [committedDoc]);
 
-  // Animate Co-Designer cursor when enabled
   useEffect(() => {
     if (!coDesignerActive) return;
     const id = window.setInterval(() => {
@@ -150,7 +180,6 @@ export function App() {
     [effectiveDoc, coDesignerStep, coDesignerActive],
   );
 
-  // Sync chrome theme class on <html>
   useEffect(() => {
     const root = document.documentElement;
     if (chromeTheme === 'light') {
@@ -206,22 +235,45 @@ export function App() {
     setViewport(fitArtboardToViewport(next.artboard, stageSizeRef.current, 64));
   }, []);
 
+  const handleSaveSnapshot = useCallback(
+    (label?: string) => {
+      const nextIndex = snapshots.length + 1;
+      const snap: DesignSnapshot = {
+        id: `snap-${Date.now().toString(36)}`,
+        label: label || `v2.${nextIndex} ${committedDoc.artboard.name}`,
+        timestamp: formatClock(),
+        doc: structuredClone(committedDoc),
+      };
+      setSnapshots((prev) => [snap, ...prev]);
+      notify(`Snapshot saved: ${snap.label}`);
+    },
+    [committedDoc, notify, snapshots.length],
+  );
+
+  const handleRestoreSnapshot = useCallback(
+    (snapshotId: string) => {
+      const target = snapshots.find((s) => s.id === snapshotId);
+      if (!target) return;
+      commitDocument(structuredClone(target.doc));
+      setSelectedIds([]);
+      notify(`Restored snapshot: ${target.label}`);
+    },
+    [commitDocument, notify, snapshots],
+  );
+
   const handleLiveUpdateNodes = useCallback((nextNodes: CanvasNode[]) => {
     setLiveNodesOverride(nextNodes);
   }, []);
 
-  const handleCommitNodes = useCallback(
-    (nextNodes: CanvasNode[]) => {
-      setLiveNodesOverride(null);
-      setHistory((prev) =>
-        pushHistory(prev, {
-          ...prev.present,
-          nodes: nextNodes,
-        }),
-      );
-    },
-    [],
-  );
+  const handleCommitNodes = useCallback((nextNodes: CanvasNode[]) => {
+    setLiveNodesOverride(null);
+    setHistory((prev) =>
+      pushHistory(prev, {
+        ...prev.present,
+        nodes: nextNodes,
+      }),
+    );
+  }, []);
 
   const handleUpdateNode = useCallback(
     (id: string, patch: Partial<CanvasNode>) => {
@@ -235,6 +287,21 @@ export function App() {
       );
     },
     [],
+  );
+
+  const handleApplyAutoLayout = useCallback(
+    (frameId: string, config: AutoLayoutConfig) => {
+      setHistory((prev) =>
+        pushHistory(prev, {
+          ...prev.present,
+          nodes: applyAutoLayoutToFrame(frameId, prev.present.nodes, config),
+        }),
+      );
+      if (config.enabled) {
+        notify(`Auto-Layout applied (${config.direction}, gap ${config.gap}px)`);
+      }
+    },
+    [notify],
   );
 
   const handleUpdateArtboard = useCallback((patch: Partial<Artboard>) => {
@@ -254,6 +321,21 @@ export function App() {
       }),
     );
   }, []);
+
+  const handleInsertAsset = useCallback(
+    (assetId: string) => {
+      const created = instantiateAssetKitItem(assetId, committedDoc);
+      if (created.length === 0) return;
+      commitDocument({
+        ...committedDoc,
+        nodes: [...committedDoc.nodes, ...created],
+      });
+      setSelectedIds([created[0].id]);
+      setUiMode('design');
+      notify(`Inserted ${created[0].name} (+${created.length} layers)`);
+    },
+    [committedDoc, commitDocument, notify],
+  );
 
   const handleUndo = useCallback(() => {
     setLiveNodesOverride(null);
@@ -315,6 +397,121 @@ export function App() {
     [next[idx], next[idx - 1]] = [next[idx - 1], next[idx]];
     commitDocument({ ...committedDoc, nodes: next });
   }, [committedDoc, commitDocument, selectedIds]);
+
+  const handleContextAction = useCallback(
+    async (nodeId: string, action: ContextMenuAction) => {
+      const node = committedDoc.nodes.find((n) => n.id === nodeId);
+      if (!node) return;
+
+      switch (action) {
+        case 'duplicate': {
+          const copy: CanvasNode = {
+            ...node,
+            id: `${node.id}-copy-${Date.now().toString(36).slice(-4)}`,
+            name: `${node.name} Copy`,
+            x: node.x + 20,
+            y: node.y + 20,
+          };
+          commitDocument({
+            ...committedDoc,
+            nodes: [...committedDoc.nodes, copy],
+          });
+          setSelectedIds([copy.id]);
+          notify(`Duplicated ${node.name}`);
+          break;
+        }
+        case 'bring-front': {
+          const rest = committedDoc.nodes.filter((n) => n.id !== nodeId);
+          commitDocument({ ...committedDoc, nodes: [...rest, node] });
+          break;
+        }
+        case 'send-back': {
+          const rest = committedDoc.nodes.filter((n) => n.id !== nodeId);
+          commitDocument({ ...committedDoc, nodes: [node, ...rest] });
+          break;
+        }
+        case 'wrap-glass': {
+          const pad = 18;
+          const wrapper: CanvasNode = {
+            id: `glass-wrap-${Date.now().toString(36)}`,
+            name: `${node.name} Glass Frame`,
+            type: 'glass',
+            x: Math.round(node.x - pad),
+            y: Math.round(node.y - pad),
+            width: Math.round(node.width + pad * 2),
+            height: Math.round(node.height + pad * 2),
+            rotation: 0,
+            radius: committedDoc.tokens.radiusBase,
+            opacity: 1,
+            fill: {
+              kind: 'gradient',
+              color: committedDoc.tokens.surfaceCard,
+              gradient: {
+                angle: 145,
+                from: committedDoc.tokens.surfaceCard,
+                to: committedDoc.tokens.surfaceElevated,
+              },
+            },
+            strokeColor: committedDoc.tokens.borderSubtle,
+            strokeWidth: 1,
+            blur: 20,
+            shadow: 'elevated',
+            blendMode: 'normal',
+            locked: false,
+            visible: true,
+            tokenBinding: {
+              fill: 'surfaceCard',
+              fillGradientFrom: 'surfaceCard',
+              fillGradientTo: 'surfaceElevated',
+              stroke: 'borderSubtle',
+              radius: 'radiusBase',
+            },
+          };
+          const idx = committedDoc.nodes.findIndex((n) => n.id === nodeId);
+          const next = [...committedDoc.nodes];
+          next.splice(Math.max(0, idx), 0, wrapper);
+          commitDocument({ ...committedDoc, nodes: next });
+          setSelectedIds([wrapper.id]);
+          notify(`Wrapped ${node.name} in Glass Card`);
+          break;
+        }
+        case 'copy-react': {
+          const code = generateReactTailwind(committedDoc, node);
+          try {
+            await navigator.clipboard.writeText(code);
+          } catch {
+            // Clipboard fallback ignored in headless contexts
+          }
+          notify(`Copied React + TW4 for ${node.name}`);
+          break;
+        }
+        case 'copy-svg': {
+          const svg = exportNodeToSvg(node, committedDoc);
+          try {
+            await navigator.clipboard.writeText(svg);
+          } catch {
+            // Clipboard fallback ignored
+          }
+          notify(`Copied standalone SVG for ${node.name}`);
+          break;
+        }
+        case 'toggle-lock': {
+          handleUpdateNode(nodeId, { locked: !node.locked });
+          break;
+        }
+        case 'delete': {
+          if (node.locked) return;
+          commitDocument({
+            ...committedDoc,
+            nodes: committedDoc.nodes.filter((n) => n.id !== nodeId),
+          });
+          setSelectedIds([]);
+          break;
+        }
+      }
+    },
+    [committedDoc, commitDocument, handleUpdateNode, notify],
+  );
 
   const handleToggleVisibility = useCallback(
     (id: string) => {
@@ -397,7 +594,6 @@ export function App() {
 
   const handleExecuteCommand = useCallback(
     (commandId: string) => {
-      // Generative UI commands
       const generated = createGeneratedNodesForCommand(commandId, committedDoc);
       if (generated.length > 0) {
         commitDocument({
@@ -409,7 +605,6 @@ export function App() {
         return;
       }
 
-      // Theme Morph commands
       const theme = resolveThemeCommand(commandId);
       if (theme) {
         handleUpdateTokens(theme);
@@ -417,12 +612,24 @@ export function App() {
         return;
       }
 
-      if (commandId === 'layout-center-selected') {
-        handleAlignSelection('centerH');
+      if (commandId === 'mode-present-prototype') {
+        setPlayerOpen(true);
+        return;
+      }
+      if (commandId === 'mode-prototype') {
+        setUiMode('prototype');
         return;
       }
       if (commandId === 'mode-toggle-dev') {
-        setUiMode((m) => (m === 'design' ? 'dev' : 'design'));
+        setUiMode((m) => (m === 'dev' ? 'design' : 'dev'));
+        return;
+      }
+      if (commandId === 'snapshot-save') {
+        handleSaveSnapshot();
+        return;
+      }
+      if (commandId === 'layout-center-selected') {
+        handleAlignSelection('centerH');
         return;
       }
       if (commandId === 'export-svg') {
@@ -443,6 +650,7 @@ export function App() {
       committedDoc,
       commitDocument,
       handleAlignSelection,
+      handleSaveSnapshot,
       handleSelectTemplate,
       handleUpdateTokens,
     ],
@@ -459,7 +667,7 @@ export function App() {
         return;
       }
 
-      if (isEditableTarget(e.target)) return;
+      if (isEditableTarget(e.target) || playerOpen) return;
 
       if (e.code === 'Space') {
         e.preventDefault();
@@ -486,13 +694,23 @@ export function App() {
         return;
       }
 
-      if (e.shiftKey && e.key.toLowerCase() === 'd') {
+      // 3-mode Pro switching: Shift+1 DESIGN, Shift+2 PROTOTYPE, Shift+3 DEV MODE
+      if (e.shiftKey && e.code === 'Digit1') {
         e.preventDefault();
-        setUiMode((m) => (m === 'design' ? 'dev' : 'design'));
+        setUiMode('design');
         return;
       }
-
-      if (e.shiftKey && e.key === '!') {
+      if (e.shiftKey && e.code === 'Digit2') {
+        e.preventDefault();
+        setUiMode('prototype');
+        return;
+      }
+      if (e.shiftKey && e.code === 'Digit3') {
+        e.preventDefault();
+        setUiMode('dev');
+        return;
+      }
+      if (e.shiftKey && e.code === 'Digit0') {
         e.preventDefault();
         handleFitToScreen();
         return;
@@ -550,6 +768,7 @@ export function App() {
     handleFitToScreen,
     handleRedo,
     handleUndo,
+    playerOpen,
     selectedIds,
   ]);
 
@@ -568,7 +787,7 @@ export function App() {
 
   return (
     <div
-      className="h-screen w-screen overflow-hidden flex flex-col"
+      className="h-screen w-screen overflow-hidden flex flex-col relative"
       style={{
         backgroundColor: 'var(--studio-canvas)',
         color: 'var(--studio-text)',
@@ -579,6 +798,10 @@ export function App() {
         onSelectTemplate={handleSelectTemplate}
         uiMode={uiMode}
         onSetUiMode={setUiMode}
+        onOpenPrototypePlayer={() => setPlayerOpen(true)}
+        snapshots={snapshots}
+        onSaveSnapshot={handleSaveSnapshot}
+        onRestoreSnapshot={handleRestoreSnapshot}
         zoom={viewport.zoom}
         onZoomIn={() => handleZoomBy(0.15)}
         onZoomOut={() => handleZoomBy(-0.15)}
@@ -620,6 +843,8 @@ export function App() {
             artboard={effectiveDoc.artboard}
             nodes={effectiveDoc.nodes}
             selectedIds={selectedIds}
+            leftTab={leftTab}
+            onSetLeftTab={setLeftTab}
             onSelectIds={setSelectedIds}
             onToggleVisibility={handleToggleVisibility}
             onToggleLock={handleToggleLock}
@@ -627,6 +852,7 @@ export function App() {
             onSendBackward={handleSendBackward}
             onDuplicate={handleDuplicate}
             onDelete={handleDelete}
+            onInsertAsset={handleInsertAsset}
             labels={labels}
           />
         )}
@@ -644,6 +870,7 @@ export function App() {
           spacePressed={spacePressed}
           onLiveUpdateNodes={handleLiveUpdateNodes}
           onCommitNodes={handleCommitNodes}
+          onContextAction={handleContextAction}
           coDesigner={coDesigner}
           crdtSynced={crdtSynced}
           labels={labels}
@@ -655,14 +882,32 @@ export function App() {
           uiMode={uiMode}
           activeTab={inspectorTab}
           onSetActiveTab={setInspectorTab}
+          onSelectIds={setSelectedIds}
           onUpdateNode={handleUpdateNode}
+          onApplyAutoLayout={handleApplyAutoLayout}
           onUpdateArtboard={handleUpdateArtboard}
           onUpdateTokens={handleUpdateTokens}
           onAlignSelection={handleAlignSelection}
           onOpenExportModal={() => setExportOpen(true)}
+          onOpenPrototypePlayer={() => setPlayerOpen(true)}
           labels={labels}
         />
       </main>
+
+      {/* Non-intrusive Studio Feedback Toast */}
+      {studioNotice && (
+        <div
+          data-testid="studio-notice"
+          className="fixed top-14 left-1/2 -translate-x-1/2 z-50 px-3.5 py-1.5 rounded-full border font-mono-tech text-[11px] shadow-2xl backdrop-blur-md pointer-events-none"
+          style={{
+            backgroundColor: 'var(--studio-surface)',
+            borderColor: 'var(--studio-cyan)',
+            color: 'var(--studio-cyan)',
+          }}
+        >
+          {studioNotice}
+        </div>
+      )}
 
       <CommandPalette
         open={commandOpen}
@@ -676,6 +921,14 @@ export function App() {
         onClose={() => setExportOpen(false)}
         doc={effectiveDoc}
         labels={labels}
+      />
+
+      <PrototypePlayerModal
+        open={playerOpen}
+        onClose={() => setPlayerOpen(false)}
+        doc={effectiveDoc}
+        onUpdateTokens={handleUpdateTokens}
+        onSwitchTemplate={handleSelectTemplate}
       />
     </div>
   );

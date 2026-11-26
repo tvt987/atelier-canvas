@@ -170,6 +170,14 @@ function createFintechSpatialDoc(): DocumentState {
           fillGradientFrom: 'brandPrimary',
           fillGradientTo: 'brandAccent',
         },
+        prototype: {
+          entrance: 'float-levitate',
+          durationMs: 2800,
+          delayMs: 0,
+          easing: 'smooth',
+          hoverEffect: 'scale',
+          clickAction: 'toggle-theme',
+        },
       }),
 
       // Main Hero Glass Balance Card (Left)
@@ -197,6 +205,14 @@ function createFintechSpatialDoc(): DocumentState {
           fillGradientTo: 'surfaceElevated',
           stroke: 'borderSubtle',
           radius: 'radiusBase',
+        },
+        prototype: {
+          entrance: 'fade-up',
+          durationMs: 520,
+          delayMs: 0,
+          easing: 'expo-out',
+          hoverEffect: 'glass-tilt',
+          clickAction: 'none',
         },
       }),
       makeBaseNode({
@@ -292,6 +308,15 @@ function createFintechSpatialDoc(): DocumentState {
           fillGradientFrom: 'brandPrimary',
           fillGradientTo: 'brandAccent',
         },
+        prototype: {
+          entrance: 'spring-scale',
+          durationMs: 480,
+          delayMs: 140,
+          easing: 'spring',
+          hoverEffect: 'lift-glow',
+          clickAction: 'toast',
+          clickPayload: 'Instant Transfer dispatched — $12,400 settled in 14ms',
+        },
       }),
       makeBaseNode({
         id: 'ft-cta-analytics',
@@ -316,6 +341,15 @@ function createFintechSpatialDoc(): DocumentState {
           fill: 'surfaceElevated',
           stroke: 'borderSubtle',
           textColor: 'textPrimary',
+        },
+        prototype: {
+          entrance: 'fade-up',
+          durationMs: 460,
+          delayMs: 190,
+          easing: 'expo-out',
+          hoverEffect: 'scale',
+          clickAction: 'pulse-target',
+          clickPayload: 'ft-chart-card',
         },
       }),
       makeBaseNode({
@@ -356,6 +390,14 @@ function createFintechSpatialDoc(): DocumentState {
           fill: 'surfaceCard',
           stroke: 'borderSubtle',
           radius: 'radiusBase',
+        },
+        prototype: {
+          entrance: 'fade-up',
+          durationMs: 560,
+          delayMs: 110,
+          easing: 'expo-out',
+          hoverEffect: 'glass-tilt',
+          clickAction: 'none',
         },
       }),
       makeBaseNode({
@@ -504,6 +546,15 @@ function createFintechSpatialDoc(): DocumentState {
           fillGradientFrom: 'brandAccent',
           fillGradientTo: 'brandPrimary',
         },
+        prototype: {
+          entrance: 'elastic-pop',
+          durationMs: 620,
+          delayMs: 240,
+          easing: 'spring',
+          hoverEffect: 'lift-glow',
+          clickAction: 'toast',
+          clickPayload: 'Peak Friday velocity: $14.2K (+38% vs avg)',
+        },
       }),
       makeBaseNode({
         id: 'ft-bar-6',
@@ -571,6 +622,14 @@ function createFintechSpatialDoc(): DocumentState {
           fill: 'surfaceCard',
           stroke: 'borderSubtle',
           radius: 'radiusBase',
+        },
+        prototype: {
+          entrance: 'fade-up',
+          durationMs: 580,
+          delayMs: 200,
+          easing: 'expo-out',
+          hoverEffect: 'none',
+          clickAction: 'none',
         },
       }),
       makeBaseNode({

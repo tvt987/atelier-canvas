@@ -7,12 +7,14 @@ import {
   FileCode2,
   FileImage,
   FileJson2,
+  Globe,
   X,
 } from 'lucide-react';
 import type { DocumentState } from '../types/canvas';
 import {
   downloadDataUrl,
   downloadTextFile,
+  exportArtboardToStandaloneHtml,
   exportArtboardToSvg,
   svgToPngDataUrl,
 } from '../engines/exporter';
@@ -29,8 +31,13 @@ interface ExportModalProps {
 export function ExportModal({ open, onClose, doc, labels }: ExportModalProps) {
   const [statusMsg, setStatusMsg] = useState<string | null>(null);
   const [busyPng, setBusyPng] = useState(false);
+  const [pngScale, setPngScale] = useState<2 | 3>(2);
 
   const svgMarkup = useMemo(() => (open ? exportArtboardToSvg(doc) : ''), [open, doc]);
+  const htmlMarkup = useMemo(
+    () => (open ? exportArtboardToStandaloneHtml(doc) : ''),
+    [open, doc],
+  );
   const reactCode = useMemo(() => (open ? generateReactTailwind(doc) : ''), [open, doc]);
   const tokensJson = useMemo(
     () => (open ? generateTokensJson(doc.tokens) : ''),
@@ -63,27 +70,38 @@ export function ExportModal({ open, onClose, doc, labels }: ExportModalProps) {
     try {
       await navigator.clipboard.writeText(svgMarkup);
     } catch {
-      // Clipboard fallback ignored in headless mode
+      // Clipboard fallback in headless contexts
     }
     flash('SVG markup copied');
   };
 
-  const handleDownloadPng2x = async () => {
+  const handleDownloadPng = async () => {
     setBusyPng(true);
     try {
       const dataUrl = await svgToPngDataUrl(
         svgMarkup,
         doc.artboard.width,
         doc.artboard.height,
-        2,
+        pngScale,
       );
-      downloadDataUrl(dataUrl, `${slug || 'atelier'}@2x.png`);
-      flash(`Rasterized ${doc.artboard.width * 2}×${doc.artboard.height * 2} PNG`);
+      downloadDataUrl(dataUrl, `${slug || 'atelier'}@${pngScale}x.png`);
+      flash(
+        `Rasterized ${doc.artboard.width * pngScale}×${doc.artboard.height * pngScale} PNG`,
+      );
     } catch {
       flash('PNG export failed in current context');
     } finally {
       setBusyPng(false);
     }
+  };
+
+  const handleDownloadHtml = () => {
+    downloadTextFile(
+      htmlMarkup,
+      `${slug || 'atelier'}-interactive.html`,
+      'text/html;charset=utf-8',
+    );
+    flash('Standalone Animated .html downloaded');
   };
 
   const handleDownloadTsx = () => {
@@ -97,6 +115,7 @@ export function ExportModal({ open, onClose, doc, labels }: ExportModalProps) {
   };
 
   const svgBytes = new Blob([svgMarkup]).size;
+  const htmlBytes = new Blob([htmlMarkup]).size;
 
   return (
     <div
@@ -113,7 +132,6 @@ export function ExportModal({ open, onClose, doc, labels }: ExportModalProps) {
           borderColor: 'var(--studio-border-strong)',
         }}
       >
-        {/* Header */}
         <div
           className="h-12 px-5 border-b flex items-center justify-between"
           style={{ borderColor: 'var(--studio-border)' }}
@@ -149,17 +167,19 @@ export function ExportModal({ open, onClose, doc, labels }: ExportModalProps) {
           </div>
         </div>
 
-        {/* Body */}
         <div className="p-5 grid grid-cols-1 md:grid-cols-12 gap-5">
           {/* Live Rendered Vector Preview */}
           <div className="md:col-span-7 flex flex-col gap-2">
-            <div className="flex items-center justify-between font-mono-tech text-[10px]" style={{ color: 'var(--studio-text-muted)' }}>
+            <div
+              className="flex items-center justify-between font-mono-tech text-[10px]"
+              style={{ color: 'var(--studio-text-muted)' }}
+            >
               <span>LIVE SVG SERIALIZATION PREVIEW</span>
               <span>{(svgBytes / 1024).toFixed(1)} KB</span>
             </div>
             <div
               data-testid="export-svg-preview"
-              className="flex-1 min-h-[260px] rounded-xl border p-4 flex items-center justify-center overflow-hidden"
+              className="flex-1 min-h-[280px] rounded-xl border p-4 flex items-center justify-center overflow-hidden"
               style={{
                 backgroundColor: 'var(--studio-canvas)',
                 borderColor: 'var(--studio-border)',
@@ -168,16 +188,16 @@ export function ExportModal({ open, onClose, doc, labels }: ExportModalProps) {
               <img
                 src={svgDataUri}
                 alt={`${doc.artboard.name} SVG preview`}
-                className="max-w-full max-h-[280px] object-contain rounded-lg shadow-xl"
+                className="max-w-full max-h-[310px] object-contain rounded-lg shadow-xl"
               />
             </div>
           </div>
 
           {/* Export Targets */}
-          <div className="md:col-span-5 flex flex-col justify-between gap-2.5">
+          <div className="md:col-span-5 flex flex-col justify-between gap-2">
             {/* SVG */}
             <div
-              className="p-3 rounded-xl border space-y-2"
+              className="p-2.5 rounded-xl border space-y-2"
               style={{
                 backgroundColor: 'var(--studio-surface-2)',
                 borderColor: 'var(--studio-border)',
@@ -185,7 +205,7 @@ export function ExportModal({ open, onClose, doc, labels }: ExportModalProps) {
             >
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
-                  <FileCode2 size={15} style={{ color: 'var(--studio-accent)' }} />
+                  <FileCode2 size={14} style={{ color: 'var(--studio-accent)' }} />
                   <span className="text-xs font-semibold">Clean Vector SVG</span>
                 </div>
                 <span className="font-mono-tech text-[10px]" style={{ color: 'var(--studio-text-muted)' }}>
@@ -197,7 +217,7 @@ export function ExportModal({ open, onClose, doc, labels }: ExportModalProps) {
                   type="button"
                   data-testid="btn-download-svg"
                   onClick={handleDownloadSvg}
-                  className="flex-1 h-8 rounded-lg text-[11px] font-semibold text-white flex items-center justify-center gap-1.5 cursor-pointer"
+                  className="flex-1 h-7 rounded-lg text-[11px] font-semibold text-white flex items-center justify-center gap-1.5 cursor-pointer"
                   style={{ backgroundColor: 'var(--studio-accent)' }}
                 >
                   <Download size={12} />
@@ -206,7 +226,7 @@ export function ExportModal({ open, onClose, doc, labels }: ExportModalProps) {
                 <button
                   type="button"
                   onClick={handleCopySvg}
-                  className="h-8 px-2.5 rounded-lg border text-[11px] font-medium flex items-center gap-1 cursor-pointer"
+                  className="h-7 px-2.5 rounded-lg border text-[11px] font-medium flex items-center gap-1 cursor-pointer"
                   style={{
                     borderColor: 'var(--studio-border-strong)',
                     color: 'var(--studio-text-secondary)',
@@ -217,9 +237,9 @@ export function ExportModal({ open, onClose, doc, labels }: ExportModalProps) {
               </div>
             </div>
 
-            {/* 2x PNG */}
+            {/* 2x / 3x High-DPI PNG */}
             <div
-              className="p-3 rounded-xl border space-y-2"
+              className="p-2.5 rounded-xl border space-y-2"
               style={{
                 backgroundColor: 'var(--studio-surface-2)',
                 borderColor: 'var(--studio-border)',
@@ -227,19 +247,35 @@ export function ExportModal({ open, onClose, doc, labels }: ExportModalProps) {
             >
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
-                  <FileImage size={15} style={{ color: 'var(--studio-cyan)' }} />
-                  <span className="text-xs font-semibold">High-DPI 2x PNG</span>
+                  <FileImage size={14} style={{ color: 'var(--studio-cyan)' }} />
+                  <span className="text-xs font-semibold">High-DPI PNG</span>
                 </div>
-                <span className="font-mono-tech text-[10px]" style={{ color: 'var(--studio-text-muted)' }}>
-                  {doc.artboard.width * 2}×{doc.artboard.height * 2}
-                </span>
+                <div className="flex items-center gap-1">
+                  {([2, 3] as const).map((sc) => (
+                    <button
+                      key={sc}
+                      type="button"
+                      data-testid={`png-scale-${sc}x`}
+                      onClick={() => setPngScale(sc)}
+                      className="px-1.5 py-0.5 rounded font-mono-tech text-[10px] font-semibold cursor-pointer"
+                      style={{
+                        backgroundColor:
+                          pngScale === sc ? '#0891B2' : 'var(--studio-surface)',
+                        color:
+                          pngScale === sc ? '#FFFFFF' : 'var(--studio-text-muted)',
+                      }}
+                    >
+                      {sc}x
+                    </button>
+                  ))}
+                </div>
               </div>
               <button
                 type="button"
                 data-testid="btn-download-png"
                 disabled={busyPng}
-                onClick={handleDownloadPng2x}
-                className="w-full h-8 rounded-lg border text-[11px] font-semibold flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
+                onClick={handleDownloadPng}
+                className="w-full h-7 rounded-lg border text-[11px] font-semibold flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
                 style={{
                   borderColor: 'rgba(6, 182, 212, 0.45)',
                   backgroundColor: 'rgba(6, 182, 212, 0.12)',
@@ -247,69 +283,84 @@ export function ExportModal({ open, onClose, doc, labels }: ExportModalProps) {
                 }}
               >
                 <Download size={12} />
-                <span>{busyPng ? 'Rasterizing...' : 'Export 2x PNG'}</span>
+                <span>
+                  {busyPng
+                    ? 'Rasterizing...'
+                    : `Export ${pngScale}x (${doc.artboard.width * pngScale}×${doc.artboard.height * pngScale})`}
+                </span>
               </button>
             </div>
 
-            {/* React + Tailwind v4 TSX */}
+            {/* Standalone Interactive Animated HTML */}
             <div
-              className="p-3 rounded-xl border flex items-center justify-between gap-2"
+              className="p-2.5 rounded-xl border space-y-2"
               style={{
                 backgroundColor: 'var(--studio-surface-2)',
                 borderColor: 'var(--studio-border)',
               }}
             >
-              <div className="flex items-center gap-2 min-w-0">
-                <Code2 size={15} style={{ color: 'var(--studio-text-secondary)' }} />
-                <div className="min-w-0">
-                  <div className="text-xs font-semibold truncate">React + Tailwind v4</div>
-                  <div className="font-mono-tech text-[10px]" style={{ color: 'var(--studio-text-muted)' }}>
-                    Production JSX
-                  </div>
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Globe size={14} className="text-emerald-400" />
+                  <span className="text-xs font-semibold">Animated HTML Bundle</span>
                 </div>
+                <span className="font-mono-tech text-[10px]" style={{ color: 'var(--studio-text-muted)' }}>
+                  {(htmlBytes / 1024).toFixed(1)} KB
+                </span>
               </div>
+              <button
+                type="button"
+                data-testid="btn-download-html"
+                onClick={handleDownloadHtml}
+                className="w-full h-7 rounded-lg border text-[11px] font-semibold flex items-center justify-center gap-1.5 cursor-pointer"
+                style={{
+                  borderColor: 'rgba(16, 185, 129, 0.45)',
+                  backgroundColor: 'rgba(16, 185, 129, 0.12)',
+                  color: '#34D399',
+                }}
+              >
+                <Download size={12} />
+                <span>Export Standalone .html</span>
+              </button>
+            </div>
+
+            {/* React + Tailwind v4 TSX + Tokens JSON Compact Row */}
+            <div className="grid grid-cols-2 gap-2">
               <button
                 type="button"
                 data-testid="btn-download-tsx"
                 onClick={handleDownloadTsx}
-                className="h-7 px-2.5 rounded-lg border text-[11px] font-semibold cursor-pointer shrink-0"
+                className="p-2.5 rounded-xl border text-left hover:border-indigo-500/50 transition-colors cursor-pointer"
                 style={{
-                  borderColor: 'var(--studio-border-strong)',
-                  color: 'var(--studio-text)',
+                  backgroundColor: 'var(--studio-surface-2)',
+                  borderColor: 'var(--studio-border)',
                 }}
               >
-                .tsx
-              </button>
-            </div>
-
-            {/* W3C Design Tokens JSON */}
-            <div
-              className="p-3 rounded-xl border flex items-center justify-between gap-2"
-              style={{
-                backgroundColor: 'var(--studio-surface-2)',
-                borderColor: 'var(--studio-border)',
-              }}
-            >
-              <div className="flex items-center gap-2 min-w-0">
-                <FileJson2 size={15} style={{ color: 'var(--studio-text-secondary)' }} />
-                <div className="min-w-0">
-                  <div className="text-xs font-semibold truncate">Design Tokens</div>
-                  <div className="font-mono-tech text-[10px]" style={{ color: 'var(--studio-text-muted)' }}>
-                    W3C DTCG JSON
-                  </div>
+                <div className="flex items-center gap-1.5">
+                  <Code2 size={13} style={{ color: 'var(--studio-accent)' }} />
+                  <span className="text-[11px] font-semibold">React .tsx</span>
                 </div>
-              </div>
+                <div className="font-mono-tech text-[9px] mt-0.5" style={{ color: 'var(--studio-text-muted)' }}>
+                  TW4 + Motion
+                </div>
+              </button>
               <button
                 type="button"
                 data-testid="btn-download-json"
                 onClick={handleDownloadTokens}
-                className="h-7 px-2.5 rounded-lg border text-[11px] font-semibold cursor-pointer shrink-0"
+                className="p-2.5 rounded-xl border text-left hover:border-cyan-500/50 transition-colors cursor-pointer"
                 style={{
-                  borderColor: 'var(--studio-border-strong)',
-                  color: 'var(--studio-text)',
+                  backgroundColor: 'var(--studio-surface-2)',
+                  borderColor: 'var(--studio-border)',
                 }}
               >
-                .json
+                <div className="flex items-center gap-1.5">
+                  <FileJson2 size={13} style={{ color: 'var(--studio-cyan)' }} />
+                  <span className="text-[11px] font-semibold">Tokens .json</span>
+                </div>
+                <div className="font-mono-tech text-[9px] mt-0.5" style={{ color: 'var(--studio-text-muted)' }}>
+                  W3C DTCG
+                </div>
               </button>
             </div>
           </div>

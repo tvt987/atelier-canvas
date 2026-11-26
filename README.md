@@ -1,61 +1,31 @@
-# ATELIER CANVAS
+# ATELIER CANVAS v2.0
 
-> Browser-based interactive vector, UI & design-system studio with Figma-style direct manipulation, smart snap alignment guides, live Design Token morphing, Dev Mode React 19 / Tailwind CSS v4 codegen, vector SVG / 2x PNG export, and Yjs CRDT multiplayer sync.
+> Next-generation browser-based Vector, UI, Interactive Prototyping & Design-System Studio (**Figma Pro × Framer × Linear**) with 3 dedicated studio modes (`DESIGN` · `PROTOTYPE` · `DEV MODE`), Vector Bezier Pen, Auto-Layout Flex Containers, 10-Component Pro UI Assets Kit, Live WCAG 2.1 AAA Contrast Auditor, Fullscreen Device-Bezel Prototype Player, Framer Motion + Tailwind CSS v4 Codegen, Standalone Animated HTML / SVG / 3x PNG Export, and Yjs CRDT Multiplayer Sync.
 
 Built by **Truong Van Tinh** ([github.com/tvt987](https://github.com/tvt987)).
 
-## Key Capabilities
+## What's Inside v2.0
 
-- **60fps Infinite Pan & Zoom Canvas**: Pixel-accurate `screenToCanvas` / `canvasToScreen` coordinate transforms, infinite architectural dot-grid, synchronized dynamic top/left pixel rulers, `Space + Drag` / Middle-Mouse / Hand tool panning, wheel cursor-anchored zooming (`25%–300%`), and `Fit to Screen`.
-- **Direct Canvas Manipulation**:
-  - Single-key Figma shortcuts: `V` Select / Marquee Multi-Select, `H` Hand, `F` Frame, `R` Rectangle, `O` Ellipse, `T` Text (with inline canvas double-click editing), `B` Button, `G` Glassmorphism Blur Card, `L` Vector Line.
-  - 8-point resize handles, live rotation handle (`Shift` snaps `15°`), real-time dimension pill, and glowing magenta (`#F43F5E`) **Smart Alignment Snap Guides** with exact pixel spacing callouts.
-  - Immutable Undo / Redo history stack (`Ctrl+Z` / `Ctrl+Shift+Z`), Duplicate (`Ctrl+D`), Arrow-key `1px` / `Shift+Arrow` `10px` nudge, Z-order controls, Lock / Visibility toggles, and 6-way Align toolbar.
-- **4 Art-Directed Curated Templates**:
-  1. `01. Spatial FinTech App UI` (default opening artboard)
-  2. `02. Swiss Exhibition Poster`
-  3. `03. AI SaaS Hero Landing`
-  4. `04. Design System Token Sheet`
-- **Live Design Tokens Engine & Brand Morphing**: Bind fills, gradients, strokes, text colors, and corner radii to semantic tokens (`--brand-primary`, `--brand-accent`, `--surface-card`, `--radius-base`, etc.) and instantaneously re-theme the entire canvas across 4 brand presets (*Obsidian Electric*, *Swiss Editorial Vermilion*, *Apple Frosted Light*, *Tokyo Bauhaus*).
-- **Figma-Style `DEV MODE` & Export Studio**:
-  - Toggle `DESIGN` / `DEV MODE` (`Shift+D`) to display exact artboard edge redline measurements (`top`, `right`, `bottom`, `left` in `px`) and live **React 19 + Tailwind CSS v4**, **Pure CSS**, and **W3C Design Tokens JSON** code generation.
-  - Export standalone vector `.svg`, rasterized `2x .png` via offscreen high-DPI `<canvas>`, production `.tsx`, and `.json` tokens.
-- **Yjs CRDT Multiplayer + `CMD+K` Command Bar**:
-  - Backed by `yjs` (`Y.Doc` + `BroadcastChannel('atelier-canvas-yjs-v1')`) for conflict-free multi-tab sync plus a 1-click **Simulate Co-Designer** cursor presence mode.
-  - `Ctrl+K` / `Cmd+K` generative command bar, bilingual `EN / VI` interface switch, and View Transitions API chrome toggle (*Obsidian Dark* ↔ *Light Studio*).
+- **3 Full Pro Modes (`DESIGN` `Shift+1` · `PROTOTYPE` `Shift+2` · `DEV MODE` `Shift+3`)**:
+  - **DESIGN**: 60fps infinite pan/zoom canvas with synchronized top/left pixel rulers, floating interactive **Canvas Minimap** with draggable viewport lens, 10 tools (`V`, `H`, `P` Vector Bezier Pen, `F` Auto-Layout Frame, `R`, `O`, `T`, `B`, `G`, `L`), 8-point resize + rotation handles, `6px` magenta Smart Snap Guides with distance callouts, and Right-Click Canvas Context Menu.
+  - **PROTOTYPE**: Configure entrance choreography (`Fade Up`, `Spring Scale`, `Slide Left`, `Elastic Pop`, `Float Levitate`, `Shimmer Glow`), duration/delay/easing, hover springs (`Lift + Glow`, `Scale 1.03`, `Glass 3D Tilt`), and click triggers (`Interactive Toast`, `Pulse Target Layer`, `Switch Template`, `Morph Brand Theme`) with live canvas flow noodles + **Cinematic Fullscreen Presentation Player** featuring **`Floating Studio`**, **`MacBook Pro`**, and **`iPhone 16 Pro`** device bezels!
+  - **DEV MODE**: Pixel-exact artboard edge redlines, **WCAG 2.1 Contrast Audit**, and automatic **React 19 + Tailwind CSS v4 + Framer Motion (`motion.div` / `motion.button`)**, **Pure CSS (`@keyframes`)**, and **W3C Design Tokens JSON** code generation.
+- **Vector Bezier Pen (`P`) & Auto-Layout Flex Engine**:
+  - Plot points directly on canvas (`Enter` / double-click to finish) to generate smooth Catmull-Rom Cubic Bezier SVG curves with customizable dash style, glow, and arrowheads.
+  - Toggle **Auto-Layout Flex** (`Row` / `Column`, `Gap`, `Padding`, `Align`) on any Frame container to deterministically reflow contained layers.
+- **Dual-Tab Left Rail (`Layers` with Instant Search + `Assets` 10-Component Pro UI Kit)**:
+  - 1-click insert token-bound widgets including *KPI Sparkline Metric Card*, *Glass Pricing Tier Card*, *Interactive Toggle Pill*, *Avatar Stack & Presence Pill*, *Floating App Navbar*, *Editorial Display Hero*, *Terminal Code Card*, *Ambient Mesh Orb*, *System Alert Toast*, and *Mini Bar Analytics Widget*.
+- **Live WCAG 2.1 Accessibility Auditor & Design Version Snapshots**:
+  - Computes real luminance contrast ratios (`AAA` / `AA` / `FAIL`) for any text or button layer against its effective backdrop, with a 1-click **Auto-Fix AAA** (`>= 7.0:1`) button.
+  - Capture and restore named **Design Version Milestones** in 1 click.
+- **Export Studio v2**: Standalone Vector `.svg`, High-DPI **`2x` / `3x` `.png`**, **Standalone Animated Interactive `.html`** bundle, production `.tsx`, and W3C `.json` tokens.
+- **Yjs CRDT Multiplayer + `CMD+K` Command Bar + Bilingual `EN / VI` + View Transitions Chrome Toggle**.
 
-## Architecture
-
-```text
-src/
-├── types/canvas.ts           # Canonical typed schema (Nodes, Artboard, Tokens, Viewport)
-├── engines/
-│   ├── viewport.ts           # Screen/canvas math, cursor-anchored zoom, ruler ticks
-│   ├── snap.ts               # 6px smart alignment snap & sibling spacing callouts
-│   ├── history.ts            # Immutable Undo/Redo command history stack
-│   ├── tokens.ts             # 4 brand theme morphs, token style resolver, W3C JSON
-│   ├── templates.ts          # 4 art-directed pre-built artboard compositions
-│   ├── codegen.ts            # React 19 + Tailwind v4, Pure CSS, and redline specs
-│   ├── exporter.ts           # Standalone SVG serializer & 2x high-DPI PNG rasterizer
-│   ├── collab.ts             # Yjs CRDT BroadcastChannel sync & co-designer cursor
-│   ├── commands.ts           # CMD+K generative design command registry
-│   └── __tests__/            # Vitest unit test suite
-├── components/
-│   ├── TopBar.tsx            # Studio header, templates, DESIGN/DEV switch, presence
-│   ├── ToolDock.tsx          # Vertical 9-tool precision dock
-│   ├── LayersPanel.tsx       # Hierarchical layer stack with lock/visibility/z-order
-│   ├── CanvasStage.tsx       # Interactive infinite stage, rulers, handles & redlines
-│   ├── InspectorPanel.tsx    # Design inspector, Tokens studio & Dev Mode codegen
-│   ├── CommandPalette.tsx    # CMD+K generative action bar
-│   └── ExportModal.tsx       # Live SVG preview & multi-format export studio
-└── i18n/labels.ts            # Bilingual EN / VI chrome copy
-```
-
-## Development & Verification
+## Verification & Scripts
 
 ```bash
 npm ci
-npm test        # Vitest unit suite
-npm run build   # TypeScript strict check (tsc -b) + Vite 6 production build
-npm run preview # Local preview at http://localhost:4173/atelier-canvas/
+npm test        # Vitest unit suite (17 tests across all v2.0 engines)
+npm run build   # Strict TypeScript check (tsc -b) + Vite 6 production build
+npm run preview # Preview at http://localhost:4173/atelier-canvas/
 ```

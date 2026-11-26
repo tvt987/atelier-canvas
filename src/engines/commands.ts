@@ -1,5 +1,6 @@
 import type { CanvasNode, DocumentState } from '../types/canvas';
 import { getTokenThemeById } from './tokens';
+import { instantiateAssetKitItem } from './assets';
 
 export interface CommandItem {
   id: string;
@@ -19,25 +20,55 @@ export const COMMAND_CATALOG: CommandItem[] = [
     keywords: ['add', 'glass', 'pricing', 'card', 'blur', 'generate'],
   },
   {
+    id: 'gen-kpi-sparkline',
+    title: 'Insert KPI Sparkline Metric Card',
+    subtitle: 'Add glass metric widget with smooth Bezier sparkline curve',
+    category: 'generate',
+    keywords: ['kpi', 'sparkline', 'chart', 'metric', 'bezier', 'widget'],
+  },
+  {
     id: 'gen-neon-orb',
     title: 'Create Neon Gradient Orb',
-    subtitle: 'Add ambient electric radial accent sphere',
+    subtitle: 'Add ambient electric radial accent sphere with levitation',
     category: 'generate',
     keywords: ['create', 'neon', 'gradient', 'orb', 'ellipse', 'glow'],
   },
   {
     id: 'gen-primary-cta',
     title: 'Add Primary CTA Button',
-    subtitle: 'Insert gradient button with token-bound shadow',
+    subtitle: 'Insert gradient button with hover lift & toast action',
     category: 'generate',
     keywords: ['add', 'button', 'cta', 'action', 'primary'],
   },
   {
     id: 'gen-editorial-title',
     title: 'Insert Editorial Display Headline',
-    subtitle: 'Add Cormorant Garamond editorial typography layer',
+    subtitle: 'Add Cormorant Garamond editorial typography lockup',
     category: 'generate',
     keywords: ['text', 'headline', 'editorial', 'serif', 'typography'],
+  },
+  {
+    id: 'mode-present-prototype',
+    title: 'Launch Interactive Prototype Presentation',
+    subtitle: 'Open fullscreen presentation player with MacBook / iPhone frames',
+    category: 'mode',
+    keywords: ['present', 'play', 'prototype', 'preview', 'fullscreen', 'device'],
+  },
+  {
+    id: 'mode-prototype',
+    title: 'Switch to Prototype Mode',
+    subtitle: 'Configure entrance animations, spring hovers & click interactions',
+    category: 'mode',
+    keywords: ['prototype', 'motion', 'animation', 'interaction', 'mode'],
+    shortcut: 'Shift+2',
+  },
+  {
+    id: 'mode-toggle-dev',
+    title: 'Toggle Dev Mode',
+    subtitle: 'Switch between Design canvas & Framer Motion / Tailwind v4 codegen',
+    category: 'mode',
+    keywords: ['dev', 'mode', 'code', 'inspect', 'redline', 'tailwind'],
+    shortcut: 'Shift+3',
   },
   {
     id: 'theme-swiss-vermilion',
@@ -75,28 +106,26 @@ export const COMMAND_CATALOG: CommandItem[] = [
     keywords: ['center', 'align', 'middle', 'layer', 'selected'],
   },
   {
-    id: 'mode-toggle-dev',
-    title: 'Toggle Dev Mode',
-    subtitle: 'Switch between Design canvas & React/Tailwind redline specs',
-    category: 'mode',
-    keywords: ['dev', 'mode', 'code', 'inspect', 'redline', 'tailwind'],
-    shortcut: 'Shift+D',
+    id: 'snapshot-save',
+    title: 'Save Design Version Snapshot',
+    subtitle: 'Capture named milestone in local version history',
+    category: 'layout',
+    keywords: ['snapshot', 'version', 'history', 'save', 'milestone'],
   },
   {
     id: 'export-svg',
-    title: 'Export Clean Vector SVG',
-    subtitle: 'Open Export Studio to download SVG, 2x PNG, or TSX',
+    title: 'Export Studio (SVG / 2x-3x PNG / Animated HTML / TSX)',
+    subtitle: 'Open Export Studio to download production vector & code assets',
     category: 'export',
-    keywords: ['export', 'svg', 'png', 'download', 'tsx', 'code'],
+    keywords: ['export', 'svg', 'png', 'html', 'download', 'tsx', 'code'],
   },
   {
     id: 'template-swiss',
-    code: 'swiss-poster',
     title: 'Load Template: Swiss Exhibition Poster',
     subtitle: 'Switch artboard to International Typographic poster',
     category: 'template',
     keywords: ['template', 'swiss', 'poster', 'exhibition'],
-  } as CommandItem,
+  },
   {
     id: 'template-saas',
     title: 'Load Template: AI SaaS Hero Landing',
@@ -134,177 +163,24 @@ export function createGeneratedNodesForCommand(
   commandId: string,
   doc: DocumentState,
 ): CanvasNode[] {
-  const t = doc.tokens;
-  const uid = Math.random().toString(36).slice(2, 7);
-  const cx = Math.round(doc.artboard.width / 2);
-  const cy = Math.round(doc.artboard.height / 2);
-
   if (commandId === 'gen-glass-pricing') {
-    const w = 264;
-    const h = 186;
-    const x = Math.max(24, Math.round(cx - w / 2));
-    const y = Math.max(24, Math.round(cy - h / 2));
-    return [
-      {
-        id: `glass-pricing-${uid}`,
-        name: 'Glass Pricing Card',
-        type: 'glass',
-        x,
-        y,
-        width: w,
-        height: h,
-        rotation: 0,
-        radius: t.radiusBase,
-        opacity: 1,
-        fill: {
-          kind: 'gradient',
-          color: t.surfaceCard,
-          gradient: { angle: 145, from: t.surfaceCard, to: t.surfaceElevated },
-        },
-        strokeColor: t.brandPrimary,
-        strokeWidth: 1,
-        blur: 22,
-        shadow: 'floating',
-        blendMode: 'normal',
-        locked: false,
-        visible: true,
-        tokenBinding: {
-          fill: 'surfaceCard',
-          fillGradientFrom: 'surfaceCard',
-          fillGradientTo: 'surfaceElevated',
-          stroke: 'brandPrimary',
-          radius: 'radiusBase',
-        },
-      },
-      {
-        id: `glass-pricing-tier-${uid}`,
-        name: 'Pricing Tier Eyebrow',
-        type: 'text',
-        x: x + 22,
-        y: y + 20,
-        width: 220,
-        height: 18,
-        rotation: 0,
-        radius: 0,
-        opacity: 1,
-        fill: { kind: 'none', color: 'transparent' },
-        strokeColor: 'transparent',
-        strokeWidth: 0,
-        blur: 0,
-        shadow: 'none',
-        blendMode: 'normal',
-        locked: false,
-        visible: true,
-        text: 'STUDIO PRO  ·  MONTHLY',
-        fontFamily: 'JetBrains Mono',
-        fontWeight: 600,
-        fontSize: 10,
-        letterSpacing: 1.3,
-        textAlign: 'left',
-        textColor: t.brandAccent,
-        tokenBinding: { textColor: 'brandAccent' },
-      },
-      {
-        id: `glass-pricing-price-${uid}`,
-        name: 'Pricing Amount',
-        type: 'text',
-        x: x + 22,
-        y: y + 48,
-        width: 220,
-        height: 46,
-        rotation: 0,
-        radius: 0,
-        opacity: 1,
-        fill: { kind: 'none', color: 'transparent' },
-        strokeColor: 'transparent',
-        strokeWidth: 0,
-        blur: 0,
-        shadow: 'none',
-        blendMode: 'normal',
-        locked: false,
-        visible: true,
-        text: '$49 / mo',
-        fontFamily: 'Space Grotesk',
-        fontWeight: 700,
-        fontSize: 34,
-        letterSpacing: -1,
-        textAlign: 'left',
-        textColor: t.textPrimary,
-        tokenBinding: { textColor: 'textPrimary' },
-      },
-      {
-        id: `glass-pricing-cta-${uid}`,
-        name: 'Pricing Upgrade Button',
-        type: 'button',
-        x: x + 22,
-        y: y + 122,
-        width: 220,
-        height: 42,
-        rotation: 0,
-        radius: 10,
-        opacity: 1,
-        fill: {
-          kind: 'gradient',
-          color: t.brandPrimary,
-          gradient: { angle: 120, from: t.brandPrimary, to: t.brandAccent },
-        },
-        strokeColor: 'transparent',
-        strokeWidth: 0,
-        blur: 0,
-        shadow: 'neon',
-        blendMode: 'normal',
-        locked: false,
-        visible: true,
-        text: 'Upgrade Workspace',
-        fontFamily: 'Space Grotesk',
-        fontWeight: 600,
-        fontSize: 13,
-        textAlign: 'center',
-        textColor: '#FFFFFF',
-        tokenBinding: {
-          fill: 'brandPrimary',
-          fillGradientFrom: 'brandPrimary',
-          fillGradientTo: 'brandAccent',
-        },
-      },
-    ];
+    return instantiateAssetKitItem('glass-pricing', doc);
   }
-
+  if (commandId === 'gen-kpi-sparkline') {
+    return instantiateAssetKitItem('kpi-sparkline', doc);
+  }
   if (commandId === 'gen-neon-orb') {
-    return [
-      {
-        id: `neon-orb-${uid}`,
-        name: 'Neon Gradient Orb',
-        type: 'ellipse',
-        x: Math.round(cx - 90),
-        y: Math.round(cy - 90),
-        width: 180,
-        height: 180,
-        rotation: 0,
-        radius: 90,
-        opacity: 0.78,
-        fill: {
-          kind: 'gradient',
-          color: t.brandPrimary,
-          gradient: { angle: 135, from: t.brandPrimary, to: t.brandAccent },
-        },
-        strokeColor: 'transparent',
-        strokeWidth: 0,
-        blur: 0,
-        shadow: 'neon',
-        blendMode: 'screen',
-        locked: false,
-        visible: true,
-        tokenBinding: {
-          fill: 'brandPrimary',
-          fillGradientFrom: 'brandPrimary',
-          fillGradientTo: 'brandAccent',
-        },
-      },
-    ];
+    return instantiateAssetKitItem('ambient-orb', doc);
+  }
+  if (commandId === 'gen-editorial-title') {
+    return instantiateAssetKitItem('editorial-hero', doc);
   }
 
   if (commandId === 'gen-primary-cta') {
+    const t = doc.tokens;
+    const uid = Math.random().toString(36).slice(2, 7);
+    const cx = Math.round(doc.artboard.width / 2);
+    const cy = Math.round(doc.artboard.height / 2);
     return [
       {
         id: `cta-btn-${uid}`,
@@ -340,39 +216,15 @@ export function createGeneratedNodesForCommand(
           fillGradientFrom: 'brandPrimary',
           fillGradientTo: 'brandAccent',
         },
-      },
-    ];
-  }
-
-  if (commandId === 'gen-editorial-title') {
-    return [
-      {
-        id: `editorial-${uid}`,
-        name: 'Editorial Headline',
-        type: 'text',
-        x: Math.round(cx - 190),
-        y: Math.round(cy - 28),
-        width: 380,
-        height: 56,
-        rotation: 0,
-        radius: 0,
-        opacity: 1,
-        fill: { kind: 'none', color: 'transparent' },
-        strokeColor: 'transparent',
-        strokeWidth: 0,
-        blur: 0,
-        shadow: 'none',
-        blendMode: 'normal',
-        locked: false,
-        visible: true,
-        text: 'Precision Craft at Scale',
-        fontFamily: 'Cormorant Garamond',
-        fontWeight: 600,
-        fontSize: 42,
-        letterSpacing: -0.6,
-        textAlign: 'center',
-        textColor: t.textPrimary,
-        tokenBinding: { textColor: 'textPrimary' },
+        prototype: {
+          entrance: 'spring-scale',
+          durationMs: 460,
+          delayMs: 0,
+          easing: 'spring',
+          hoverEffect: 'lift-glow',
+          clickAction: 'toast',
+          clickPayload: 'Component deployed to production edge',
+        },
       },
     ];
   }

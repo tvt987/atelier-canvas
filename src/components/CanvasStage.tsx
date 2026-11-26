@@ -1,10 +1,26 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  ArrowDownToLine,
+  ArrowUpToLine,
+  Check,
+  Code2,
+  Copy,
+  FileCode2,
+  Lock,
+  Map as MapIcon,
+  Minimize2,
+  Sparkles,
+  Trash2,
+  Unlock,
+  Zap,
+} from 'lucide-react';
 import type {
   Bounds,
   CanvasNode,
   CollaboratorCursor,
   DocumentState,
   NodeType,
+  PathPoint,
   Point,
   SnapGuide,
   ToolType,
@@ -19,10 +35,24 @@ import {
 import { computeSnap } from '../engines/snap';
 import { resolveArtboardBackground, resolveNodeStyle } from '../engines/tokens';
 import { computeRedlineMeasurements } from '../engines/codegen';
-import { createNodeFromTool } from '../engines/nodeFactory';
+import {
+  createNodeFromTool,
+  createPathNodeFromPoints,
+} from '../engines/nodeFactory';
+import { buildSvgPathData, scalePathPoints } from '../engines/bezier';
 import type { StudioLabels } from '../i18n/labels';
 
 type ResizeHandle = 'nw' | 'n' | 'ne' | 'e' | 'se' | 's' | 'sw' | 'w';
+
+export type ContextMenuAction =
+  | 'duplicate'
+  | 'bring-front'
+  | 'send-back'
+  | 'wrap-glass'
+  | 'copy-react'
+  | 'copy-svg'
+  | 'toggle-lock'
+  | 'delete';
 
 interface CanvasStageProps {
   doc: DocumentState;
@@ -37,6 +67,7 @@ interface CanvasStageProps {
   spacePressed: boolean;
   onLiveUpdateNodes: (nextNodes: CanvasNode[]) => void;
   onCommitNodes: (nextNodes: CanvasNode[]) => void;
+  onContextAction: (nodeId: string, action: ContextMenuAction) => void;
   coDesigner: CollaboratorCursor;
   crdtSynced: boolean;
   labels: StudioLabels;
@@ -89,6 +120,7 @@ type InteractionState =
       nodeId: string;
       startCanvas: Point;
       initialRect: Bounds;
+      initialPathPoints?: PathPoint[];
       baseNodes: CanvasNode[];
     }
   | {
@@ -100,7 +132,12 @@ type InteractionState =
       baseNodes: CanvasNode[];
     }
   | { kind: 'marquee'; startCanvas: Point; currentCanvas: Point }
-  | { kind: 'draw'; tool: NodeType; startCanvas: Point; currentCanvas: Point };
+  | {
+      kind: 'draw';
+      tool: Exclude<NodeType, 'path'>;
+      startCanvas: Point;
+      currentCanvas: Point;
+    };
 
 export function CanvasStage({
   doc,
@@ -115,6 +152,7 @@ export function CanvasStage({
   spacePressed,
   onLiveUpdateNodes,
   onCommitNodes,
+  onContextAction,
   coDesigner,
   crdtSynced,
   labels,
@@ -129,6 +167,13 @@ export function CanvasStage({
   const [marqueeBox, setMarqueeBox] = useState<Bounds | null>(null);
   const [drawBox, setDrawBox] = useState<Bounds | null>(null);
   const [rotatingAngle, setRotatingAngle] = useState<number | null>(null);
+  const [penPoints, setPenPoints] = useState<PathPoint[]>([]);
+  const [minimapOpen, setMinimapOpen] = useState(true);
+  const [contextMenu, setContextMenu] = useState<{
+    x: number;
+    y: number;
+    nodeId: string;
+  } | null>(null);
 
   const interactionRef = useRef<InteractionState>({ kind: 'idle' });
   const latestNodesRef = useRef<CanvasNode[]>(doc.nodes);
@@ -137,7 +182,53 @@ export function CanvasStage({
   const viewportRef = useRef(viewport);
   viewportRef.current = viewport;
 
-  // Observe stage dimensions for responsive rulers & initial centering
+  const penPointsRef = useRef<PathPoint[]>(penPoints);
+  penPointsRef.current = penPoints;
+
+  const finishPenPath = useCallback(() => {
+    const pts = penPointsRef.current;
+    if (pts.length >= 2) {
+      const created = createPathNodeFromPoints(pts, doc.tokens);
+      onCommitNodes([...latestNodesRef.current, created]);
+      onSelectIds([created.id]);
+    }
+    setPenPoints([]);
+    onSelectTool('select');
+  }, [doc.tokens, onCommitNodes, onSelectIds, onSelectTool]);
+
+  // Clear pending pen points when switching away from pen tool
+  useEffect(() => {
+    if (activeTool !== 'pen' && penPointsRef.current.length > 0) {
+      setPenPoints([]);
+    }
+  }, [activeTool]);
+
+  // Pen keyboard finish (Enter) / cancel (Escape) + Context menu close on Escape
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        if (contextMenu) setContextMenu(null);
+        if (penPointsRef.current.length > 0) {
+          setPenPoints([]);
+          onSelectTool('select');
+        }
+      } else if (e.key === 'Enter' && activeTool === 'pen' && penPointsRef.current.length >= 2) {
+        e.preventDefault();
+        finishPenPath();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [activeTool, contextMenu, finishPenPath, onSelectTool]);
+
+  // Close context menu when clicking outside
+  useEffect(() => {
+    if (!contextMenu) return;
+    const close = () => setContextMenu(null);
+    window.addEventListener('mousedown', close);
+    return () => window.removeEventListener('mousedown', close);
+  }, [contextMenu]);
+
   useEffect(() => {
     const el = stageRef.current;
     if (!el) return;
@@ -158,7 +249,6 @@ export function CanvasStage({
     return rect ? { x: rect.left, y: rect.top } : { x: 0, y: 0 };
   }, []);
 
-  // Native non-passive wheel zoom/pan handler
   useEffect(() => {
     const el = stageRef.current;
     if (!el) return;
@@ -167,7 +257,6 @@ export function CanvasStage({
       e.preventDefault();
       const rect = el.getBoundingClientRect();
       const anchor = { x: e.clientX - rect.left, y: e.clientY - rect.top };
-
       if (e.ctrlKey || e.metaKey || Math.abs(e.deltaY) >= 4) {
         const factor = e.deltaY < 0 ? 1.09 : 0.92;
         onViewportChange(
@@ -190,7 +279,6 @@ export function CanvasStage({
     [selectedNodes],
   );
 
-  // Global pointer move & pointer up lifecycle
   useEffect(() => {
     const handlePointerMove = (e: PointerEvent) => {
       const origin = getStageOrigin();
@@ -292,17 +380,31 @@ export function CanvasStage({
           height = nextH;
         }
 
-        const nextNodes = interaction.baseNodes.map((n) =>
-          n.id === interaction.nodeId
-            ? {
-                ...n,
-                x: Math.round(x),
-                y: Math.round(y),
-                width: Math.round(width),
-                height: Math.round(height),
-              }
-            : n,
-        );
+        const nextNodes = interaction.baseNodes.map((n) => {
+          if (n.id !== interaction.nodeId) return n;
+          const roundedW = Math.round(width);
+          const roundedH = Math.round(height);
+          return {
+            ...n,
+            x: Math.round(x),
+            y: Math.round(y),
+            width: roundedW,
+            height: roundedH,
+            pathData:
+              n.pathData && interaction.initialPathPoints
+                ? {
+                    ...n.pathData,
+                    points: scalePathPoints(
+                      interaction.initialPathPoints,
+                      r.width,
+                      r.height,
+                      roundedW,
+                      roundedH,
+                    ),
+                  }
+                : n.pathData,
+          };
+        });
         onLiveUpdateNodes(nextNodes);
         return;
       }
@@ -422,10 +524,18 @@ export function CanvasStage({
     onViewportChange,
   ]);
 
-  const handleStagePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
-    if (editingNodeId) {
-      commitInlineText();
+  const handlePenClick = (ptCanvas: Point, detail: number) => {
+    const nextPt = { x: Math.round(ptCanvas.x), y: Math.round(ptCanvas.y) };
+    if (detail >= 2 && penPointsRef.current.length >= 2) {
+      finishPenPath();
+      return;
     }
+    setPenPoints((prev) => [...prev, nextPt]);
+  };
+
+  const handleStagePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (contextMenu) setContextMenu(null);
+    if (editingNodeId) commitInlineText();
 
     const origin = getStageOrigin();
     const ptCanvas = screenToCanvas(
@@ -434,7 +544,6 @@ export function CanvasStage({
       viewport,
     );
 
-    // Hand tool, Space key, or Middle Mouse button -> Pan
     if (activeTool === 'hand' || spacePressed || e.button === 1) {
       e.preventDefault();
       interactionRef.current = {
@@ -447,8 +556,12 @@ export function CanvasStage({
 
     if (e.button !== 0) return;
 
-    // Drawing tool active -> Start drawing new node
-    if (activeTool !== 'select' && uiMode === 'design') {
+    if (activeTool === 'pen' && uiMode === 'design') {
+      handlePenClick(ptCanvas, e.detail);
+      return;
+    }
+
+    if (activeTool !== 'select' && activeTool !== 'pen' && uiMode === 'design') {
       interactionRef.current = {
         kind: 'draw',
         tool: activeTool,
@@ -459,7 +572,6 @@ export function CanvasStage({
       return;
     }
 
-    // Clicked empty background in Select mode -> deselect + start marquee box
     onSelectIds([]);
     if (uiMode === 'design') {
       interactionRef.current = {
@@ -475,6 +587,8 @@ export function CanvasStage({
     node: CanvasNode,
   ) => {
     e.stopPropagation();
+    if (contextMenu) setContextMenu(null);
+
     if (activeTool === 'hand' || spacePressed || e.button === 1) {
       interactionRef.current = {
         kind: 'pan',
@@ -485,14 +599,19 @@ export function CanvasStage({
     }
     if (e.button !== 0) return;
 
-    // If user is in a drawing tool, let them draw over artboard/cards naturally
-    if (activeTool !== 'select' && uiMode === 'design') {
-      const origin = getStageOrigin();
-      const ptCanvas = screenToCanvas(
-        { x: e.clientX, y: e.clientY },
-        origin,
-        viewport,
-      );
+    const origin = getStageOrigin();
+    const ptCanvas = screenToCanvas(
+      { x: e.clientX, y: e.clientY },
+      origin,
+      viewport,
+    );
+
+    if (activeTool === 'pen' && uiMode === 'design') {
+      handlePenClick(ptCanvas, e.detail);
+      return;
+    }
+
+    if (activeTool !== 'select' && activeTool !== 'pen' && uiMode === 'design') {
       interactionRef.current = {
         kind: 'draw',
         tool: activeTool,
@@ -515,14 +634,8 @@ export function CanvasStage({
     }
     onSelectIds(nextSelected);
 
-    if (uiMode === 'dev' || node.locked) return;
+    if (uiMode !== 'design' || node.locked) return;
 
-    const origin = getStageOrigin();
-    const ptCanvas = screenToCanvas(
-      { x: e.clientX, y: e.clientY },
-      origin,
-      viewport,
-    );
     const movableIds = nextSelected.filter((id) => {
       const found = doc.nodes.find((n) => n.id === id);
       return found && !found.locked;
@@ -541,13 +654,25 @@ export function CanvasStage({
     };
   };
 
+  const handleNodeContextMenu = (e: React.MouseEvent, node: CanvasNode) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!selectedIds.includes(node.id)) {
+      onSelectIds([node.id]);
+    }
+    const origin = getStageOrigin();
+    const localX = Math.min(stageSize.width - 210, Math.max(30, e.clientX - origin.x));
+    const localY = Math.min(stageSize.height - 290, Math.max(30, e.clientY - origin.y));
+    setContextMenu({ x: localX, y: localY, nodeId: node.id });
+  };
+
   const startResize = (
     e: React.PointerEvent,
     handle: ResizeHandle,
     node: CanvasNode,
   ) => {
     e.stopPropagation();
-    if (node.locked || uiMode === 'dev') return;
+    if (node.locked || uiMode !== 'design') return;
     const origin = getStageOrigin();
     const ptCanvas = screenToCanvas(
       { x: e.clientX, y: e.clientY },
@@ -565,13 +690,14 @@ export function CanvasStage({
         width: node.width,
         height: node.height,
       },
+      initialPathPoints: node.pathData?.points,
       baseNodes: doc.nodes,
     };
   };
 
   const startRotate = (e: React.PointerEvent, node: CanvasNode) => {
     e.stopPropagation();
-    if (node.locked || uiMode === 'dev') return;
+    if (node.locked || uiMode !== 'design') return;
     const origin = getStageOrigin();
     const ptCanvas = screenToCanvas(
       { x: e.clientX, y: e.clientY },
@@ -591,7 +717,7 @@ export function CanvasStage({
   };
 
   const startInlineText = (node: CanvasNode) => {
-    if (uiMode === 'dev' || node.locked) return;
+    if (uiMode !== 'design' || node.locked) return;
     if (node.type !== 'text' && node.type !== 'button') return;
     setEditingNodeId(node.id);
     setEditingDraft(node.text ?? '');
@@ -611,17 +737,25 @@ export function CanvasStage({
     [doc.artboard, doc.tokens],
   );
 
-  // Rulers ticks synchronized with viewport
   const topTicks = useMemo(
-    () => getRulerTicks(viewport.x - RULER_SIZE, viewport.zoom, Math.max(0, stageSize.width - RULER_SIZE)),
+    () =>
+      getRulerTicks(
+        viewport.x - RULER_SIZE,
+        viewport.zoom,
+        Math.max(0, stageSize.width - RULER_SIZE),
+      ),
     [viewport.x, viewport.zoom, stageSize.width],
   );
   const leftTicks = useMemo(
-    () => getRulerTicks(viewport.y - RULER_SIZE, viewport.zoom, Math.max(0, stageSize.height - RULER_SIZE)),
+    () =>
+      getRulerTicks(
+        viewport.y - RULER_SIZE,
+        viewport.zoom,
+        Math.max(0, stageSize.height - RULER_SIZE),
+      ),
     [viewport.y, viewport.zoom, stageSize.height],
   );
 
-  // Dev mode active inspect node (selected or hovered)
   const devInspectNode = useMemo(() => {
     if (uiMode !== 'dev') return null;
     if (primarySelected) return primarySelected;
@@ -633,6 +767,37 @@ export function CanvasStage({
     if (!devInspectNode) return null;
     return computeRedlineMeasurements(devInspectNode, doc.artboard);
   }, [devInspectNode, doc.artboard]);
+
+  // Prototype mode flow noodles (source -> pulse-target node)
+  const prototypeNoodles = useMemo(() => {
+    if (uiMode !== 'prototype') return [];
+    const connectors: Array<{
+      id: string;
+      x1: number;
+      y1: number;
+      x2: number;
+      y2: number;
+    }> = [];
+    for (const src of doc.nodes) {
+      if (
+        src.visible &&
+        src.prototype?.clickAction === 'pulse-target' &&
+        src.prototype.clickPayload
+      ) {
+        const dst = doc.nodes.find((n) => n.id === src.prototype?.clickPayload);
+        if (dst && dst.visible) {
+          connectors.push({
+            id: `${src.id}->${dst.id}`,
+            x1: src.x + src.width,
+            y1: src.y + src.height / 2,
+            x2: dst.x,
+            y2: dst.y + dst.height / 2,
+          });
+        }
+      }
+    }
+    return connectors;
+  }, [doc.nodes, uiMode]);
 
   const gridSpacing = Math.max(12, 24 * viewport.zoom);
   const cursorStyle =
@@ -656,6 +821,45 @@ export function CanvasStage({
         ]
       : [];
 
+  // Minimap coordinate mapping
+  const miniW = 160;
+  const miniH = 104;
+  const miniScale = Math.min(
+    (miniW - 24) / Math.max(1, doc.artboard.width),
+    (miniH - 20) / Math.max(1, doc.artboard.height),
+  );
+  const miniOffsetX = (miniW - doc.artboard.width * miniScale) / 2;
+  const miniOffsetY = (miniH - doc.artboard.height * miniScale) / 2;
+
+  const lensCanvasX = -viewport.x / viewport.zoom;
+  const lensCanvasY = -viewport.y / viewport.zoom;
+  const lensCanvasW = stageSize.width / viewport.zoom;
+  const lensCanvasH = stageSize.height / viewport.zoom;
+
+  const panFromMinimapEvent = (e: React.PointerEvent<HTMLDivElement>) => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    const mx = e.clientX - rect.left;
+    const my = e.clientY - rect.top;
+    const targetCanvasX = (mx - miniOffsetX) / miniScale;
+    const targetCanvasY = (my - miniOffsetY) / miniScale;
+    onViewportChange({
+      ...viewport,
+      x: Math.round(stageSize.width / 2 - targetCanvasX * viewport.zoom),
+      y: Math.round(stageSize.height / 2 - targetCanvasY * viewport.zoom),
+    });
+  };
+
+  const contextNode = contextMenu
+    ? doc.nodes.find((n) => n.id === contextMenu.nodeId) ?? null
+    : null;
+
+  const accentBorderColor =
+    uiMode === 'dev'
+      ? '#06B6D4'
+      : uiMode === 'prototype'
+        ? '#10B981'
+        : '#6366F1';
+
   return (
     <div
       ref={stageRef}
@@ -671,7 +875,7 @@ export function CanvasStage({
         backgroundPosition: `${viewport.x}px ${viewport.y}px`,
       }}
     >
-      {/* Top-Left Ruler Origin Box */}
+      {/* Ruler Corner Origin */}
       <div
         className="absolute top-0 left-0 z-30 border-r border-b flex items-center justify-center font-mono-tech text-[8px]"
         style={{
@@ -702,7 +906,7 @@ export function CanvasStage({
               left: selectionBounds.x * viewport.zoom + viewport.x - RULER_SIZE,
               width: selectionBounds.width * viewport.zoom,
               backgroundColor: 'rgba(99, 102, 241, 0.18)',
-              borderBottom: '2px solid var(--studio-accent)',
+              borderBottom: `2px solid ${accentBorderColor}`,
             }}
           />
         )}
@@ -748,7 +952,7 @@ export function CanvasStage({
               top: selectionBounds.y * viewport.zoom + viewport.y - RULER_SIZE,
               height: selectionBounds.height * viewport.zoom,
               backgroundColor: 'rgba(99, 102, 241, 0.18)',
-              borderRight: '2px solid var(--studio-accent)',
+              borderRight: `2px solid ${accentBorderColor}`,
             }}
           />
         )}
@@ -784,7 +988,7 @@ export function CanvasStage({
           transform: `translate3d(${viewport.x}px, ${viewport.y}px, 0) scale(${viewport.zoom})`,
         }}
       >
-        {/* Artboard Meta Label Floating Above Frame */}
+        {/* Artboard Title Bar */}
         <div
           className="absolute flex items-center justify-between pointer-events-none"
           style={{
@@ -800,7 +1004,7 @@ export function CanvasStage({
               fontSize: `${11 / viewport.zoom}px`,
               color:
                 selectedIds.length === 0
-                  ? 'var(--studio-accent)'
+                  ? accentBorderColor
                   : 'var(--studio-text-muted)',
             }}
           >
@@ -840,12 +1044,99 @@ export function CanvasStage({
               const isHovered = hoveredId === node.id;
               const isEditing = editingNodeId === node.id;
 
+              if (node.type === 'path' && node.pathData) {
+                const d = buildSvgPathData(
+                  node.pathData.points,
+                  node.pathData.smooth !== false,
+                  Boolean(node.pathData.closed),
+                );
+                const dash =
+                  node.pathData.dashStyle === 'dashed'
+                    ? '8 6'
+                    : node.pathData.dashStyle === 'dotted'
+                      ? '2 6'
+                      : undefined;
+                const markerId = `arrow-${node.id.replace(/[^a-zA-Z0-9]/g, '')}`;
+                return (
+                  <div
+                    key={node.id}
+                    data-testid={`canvas-node-${node.id}`}
+                    data-node-type="path"
+                    onPointerDown={(e) => handleNodePointerDown(e, node)}
+                    onContextMenu={(e) => handleNodeContextMenu(e, node)}
+                    onPointerEnter={() => setHoveredId(node.id)}
+                    onPointerLeave={() =>
+                      setHoveredId((prev) => (prev === node.id ? null : prev))
+                    }
+                    className="absolute"
+                    style={{
+                      left: node.x - doc.artboard.x,
+                      top: node.y - doc.artboard.y,
+                      width: node.width,
+                      height: node.height,
+                      opacity: node.opacity,
+                      transform:
+                        node.rotation !== 0
+                          ? `rotate(${node.rotation}deg)`
+                          : undefined,
+                      outline:
+                        !isSelected && isHovered
+                          ? `${1.25 / viewport.zoom}px dashed ${accentBorderColor}`
+                          : undefined,
+                      cursor: activeTool === 'select' ? 'move' : undefined,
+                    }}
+                  >
+                    <svg
+                      viewBox={`0 0 ${node.width} ${node.height}`}
+                      className="w-full h-full overflow-visible pointer-events-none"
+                      fill="none"
+                      style={{
+                        filter: node.pathData.glow
+                          ? `drop-shadow(0 0 8px ${style.strokeColor})`
+                          : undefined,
+                      }}
+                    >
+                      {node.pathData.endArrow && (
+                        <defs>
+                          <marker
+                            id={markerId}
+                            viewBox="0 0 10 10"
+                            refX="7"
+                            refY="5"
+                            markerWidth="6"
+                            markerHeight="6"
+                            orient="auto-start-reverse"
+                          >
+                            <path
+                              d="M 1 1 L 9 5 L 1 9 z"
+                              fill={style.strokeColor}
+                            />
+                          </marker>
+                        </defs>
+                      )}
+                      <path
+                        d={d}
+                        stroke={style.strokeColor}
+                        strokeWidth={Math.max(1.5, node.strokeWidth || 2.5)}
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeDasharray={dash}
+                        markerEnd={
+                          node.pathData.endArrow ? `url(#${markerId})` : undefined
+                        }
+                      />
+                    </svg>
+                  </div>
+                );
+              }
+
               return (
                 <div
                   key={node.id}
                   data-testid={`canvas-node-${node.id}`}
                   data-node-type={node.type}
                   onPointerDown={(e) => handleNodePointerDown(e, node)}
+                  onContextMenu={(e) => handleNodeContextMenu(e, node)}
                   onDoubleClick={(e) => {
                     e.stopPropagation();
                     startInlineText(node);
@@ -874,7 +1165,8 @@ export function CanvasStage({
                       node.blur > 0 ? `blur(${node.blur}px)` : undefined,
                     WebkitBackdropFilter:
                       node.blur > 0 ? `blur(${node.blur}px)` : undefined,
-                    boxShadow: style.boxShadow !== 'none' ? style.boxShadow : undefined,
+                    boxShadow:
+                      style.boxShadow !== 'none' ? style.boxShadow : undefined,
                     mixBlendMode: node.blendMode,
                     display:
                       node.type === 'button' || node.type === 'text'
@@ -892,11 +1184,11 @@ export function CanvasStage({
                             : 'flex-start',
                     outline:
                       !isSelected && isHovered
-                        ? `${1.25 / viewport.zoom}px solid ${uiMode === 'dev' ? '#06B6D4' : '#6366F1'}`
+                        ? `${1.25 / viewport.zoom}px solid ${accentBorderColor}`
                         : undefined,
                     cursor:
                       activeTool === 'select'
-                        ? uiMode === 'dev'
+                        ? uiMode !== 'design'
                           ? 'pointer'
                           : node.locked
                             ? 'not-allowed'
@@ -951,7 +1243,129 @@ export function CanvasStage({
             })}
         </div>
 
-        {/* Selection Bounding Box + 8 Resize Handles + Rotation Handle */}
+        {/* PROTOTYPE MODE Glowing Badges & Interactive Connector Noodles */}
+        {uiMode === 'prototype' && (
+          <div
+            data-testid="prototype-canvas-overlay"
+            className="absolute pointer-events-none"
+            style={{
+              left: doc.artboard.x,
+              top: doc.artboard.y,
+              width: doc.artboard.width,
+              height: doc.artboard.height,
+            }}
+          >
+            {prototypeNoodles.length > 0 && (
+              <svg
+                className="absolute inset-0 w-full h-full overflow-visible"
+                viewBox={`0 0 ${doc.artboard.width} ${doc.artboard.height}`}
+                fill="none"
+              >
+                <defs>
+                  <marker
+                    id="proto-noodle-arrow"
+                    viewBox="0 0 10 10"
+                    refX="7"
+                    refY="5"
+                    markerWidth="6"
+                    markerHeight="6"
+                    orient="auto-start-reverse"
+                  >
+                    <path d="M 1 1 L 9 5 L 1 9 z" fill="#10B981" />
+                  </marker>
+                </defs>
+                {prototypeNoodles.map((c) => {
+                  const midX = (c.x1 + c.x2) / 2;
+                  const pathD = `M ${c.x1} ${c.y1} C ${midX} ${c.y1}, ${midX} ${c.y2}, ${c.x2} ${c.y2}`;
+                  return (
+                    <g key={c.id}>
+                      <circle cx={c.x1} cy={c.y1} r="4.5" fill="#10B981" />
+                      <path
+                        d={pathD}
+                        stroke="#10B981"
+                        strokeWidth="2"
+                        strokeDasharray="6 4"
+                        markerEnd="url(#proto-noodle-arrow)"
+                        style={{ filter: 'drop-shadow(0 0 6px rgba(16,185,129,0.65))' }}
+                      />
+                    </g>
+                  );
+                })}
+              </svg>
+            )}
+
+            {doc.nodes
+              .filter(
+                (n) =>
+                  n.visible &&
+                  n.prototype &&
+                  (n.prototype.entrance !== 'none' ||
+                    n.prototype.clickAction !== 'none'),
+              )
+              .map((node) => {
+                const p = node.prototype!;
+                const badgeText =
+                  p.clickAction !== 'none'
+                    ? `Click · ${p.clickAction}`
+                    : `${p.entrance} · ${p.durationMs}ms`;
+                return (
+                  <div
+                    key={`pbadge-${node.id}`}
+                    className="absolute rounded-full px-1.5 py-0.5 flex items-center gap-1 font-mono-tech font-semibold text-slate-950 shadow-lg whitespace-nowrap"
+                    style={{
+                      left: node.x - doc.artboard.x,
+                      top: node.y - doc.artboard.y - 18 / viewport.zoom,
+                      fontSize: `${8.5 / viewport.zoom}px`,
+                      backgroundColor:
+                        p.clickAction !== 'none' ? '#34D399' : '#38BDF8',
+                    }}
+                  >
+                    <Zap size={Math.max(8, 9 / viewport.zoom)} strokeWidth={2.2} />
+                    <span>{badgeText}</span>
+                  </div>
+                );
+              })}
+          </div>
+        )}
+
+        {/* Live Vector Pen Plotting Preview */}
+        {activeTool === 'pen' && penPoints.length > 0 && (
+          <svg
+            data-testid="pen-preview-svg"
+            className="absolute inset-0 overflow-visible pointer-events-none"
+            style={{ width: 1, height: 1 }}
+            fill="none"
+          >
+            <path
+              d={buildSvgPathData([...penPoints, pointerCanvas], true, false)}
+              stroke="#06B6D4"
+              strokeWidth={2 / viewport.zoom}
+              strokeDasharray={`${5 / viewport.zoom} ${4 / viewport.zoom}`}
+              strokeLinecap="round"
+            />
+            {penPoints.length >= 2 && (
+              <path
+                d={buildSvgPathData(penPoints, true, false)}
+                stroke="#6366F1"
+                strokeWidth={2.5 / viewport.zoom}
+                strokeLinecap="round"
+              />
+            )}
+            {penPoints.map((pt, idx) => (
+              <circle
+                key={`pen-pt-${idx}`}
+                cx={pt.x}
+                cy={pt.y}
+                r={4 / viewport.zoom}
+                fill="#FFFFFF"
+                stroke="#06B6D4"
+                strokeWidth={1.8 / viewport.zoom}
+              />
+            ))}
+          </svg>
+        )}
+
+        {/* Selection Bounding Box */}
         {selectionBounds && (
           <div
             data-testid="selection-overlay"
@@ -961,16 +1375,15 @@ export function CanvasStage({
               top: selectionBounds.y,
               width: selectionBounds.width,
               height: selectionBounds.height,
-              border: `${1.5 / viewport.zoom}px solid ${uiMode === 'dev' ? '#06B6D4' : '#6366F1'}`,
+              border: `${1.5 / viewport.zoom}px solid ${accentBorderColor}`,
             }}
           >
-            {/* Dimension Pill */}
             <div
               className="absolute left-1/2 -translate-x-1/2 font-mono-tech font-semibold text-white whitespace-nowrap rounded px-1.5 py-0.5"
               style={{
                 top: `calc(100% + ${8 / viewport.zoom}px)`,
                 fontSize: `${10 / viewport.zoom}px`,
-                backgroundColor: uiMode === 'dev' ? '#0891B2' : '#6366F1',
+                backgroundColor: accentBorderColor,
               }}
             >
               {Math.round(selectionBounds.width)} × {Math.round(selectionBounds.height)}
@@ -979,7 +1392,7 @@ export function CanvasStage({
           </div>
         )}
 
-        {/* 8-Point Resize Handles & Top Rotation Handle (Design Mode, Single Selection) */}
+        {/* 8-Point Resize Handles & Top Rotation Handle */}
         {uiMode === 'design' && primarySelected && !primarySelected.locked && (
           <>
             {handlePositions.map((h) => (
@@ -998,7 +1411,6 @@ export function CanvasStage({
                 }}
               />
             ))}
-            {/* Rotation stem + knob */}
             <div
               className="absolute pointer-events-none"
               style={{
@@ -1073,7 +1485,7 @@ export function CanvasStage({
           </div>
         ))}
 
-        {/* DEV MODE Redline Spacing Measurements to Parent Artboard */}
+        {/* DEV MODE Redline Spacing Measurements */}
         {uiMode === 'dev' && devInspectNode && devRedlines && (
           <div
             data-testid="dev-redlines"
@@ -1085,7 +1497,6 @@ export function CanvasStage({
               height: doc.artboard.height,
             }}
           >
-            {/* Top measurement */}
             {devRedlines.top > 0 && (
               <>
                 <div
@@ -1110,7 +1521,6 @@ export function CanvasStage({
                 </span>
               </>
             )}
-            {/* Bottom measurement */}
             {devRedlines.bottom > 0 && (
               <>
                 <div
@@ -1135,7 +1545,6 @@ export function CanvasStage({
                 </span>
               </>
             )}
-            {/* Left measurement */}
             {devRedlines.left > 0 && (
               <>
                 <div
@@ -1160,7 +1569,6 @@ export function CanvasStage({
                 </span>
               </>
             )}
-            {/* Right measurement */}
             {devRedlines.right > 0 && (
               <>
                 <div
@@ -1188,7 +1596,7 @@ export function CanvasStage({
           </div>
         )}
 
-        {/* Rubber-band Marquee Box */}
+        {/* Marquee Selection Box */}
         {marqueeBox && (
           <div
             className="absolute pointer-events-none"
@@ -1218,7 +1626,7 @@ export function CanvasStage({
           />
         )}
 
-        {/* Animated Co-Designer Live Presence Cursor */}
+        {/* Animated Co-Designer Cursor */}
         {coDesigner.active && (
           <div
             data-testid="co-designer-cursor"
@@ -1258,20 +1666,209 @@ export function CanvasStage({
         )}
       </div>
 
+      {/* Pen Tool Floating Finish Pill */}
+      {activeTool === 'pen' && penPoints.length >= 2 && (
+        <div
+          className="absolute top-9 left-1/2 -translate-x-1/2 z-30 flex items-center gap-2 px-3 py-1.5 rounded-full border shadow-xl"
+          style={{
+            backgroundColor: 'var(--studio-surface)',
+            borderColor: 'var(--studio-cyan)',
+          }}
+        >
+          <span className="font-mono-tech text-[10px]" style={{ color: 'var(--studio-cyan)' }}>
+            {penPoints.length} anchor points plotted
+          </span>
+          <button
+            type="button"
+            data-testid="btn-pen-finish"
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={finishPenPath}
+            className="h-6 px-2.5 rounded-full bg-indigo-500 text-white text-[10px] font-semibold flex items-center gap-1 cursor-pointer"
+          >
+            <Check size={11} />
+            <span>Finish Curve (Enter)</span>
+          </button>
+        </div>
+      )}
+
+      {/* Right-Click Canvas Context Menu */}
+      {contextMenu && contextNode && (
+        <div
+          data-testid="canvas-context-menu"
+          onPointerDown={(e) => e.stopPropagation()}
+          onMouseDown={(e) => e.stopPropagation()}
+          className="absolute z-50 w-52 rounded-xl border p-1 shadow-2xl"
+          style={{
+            left: contextMenu.x,
+            top: contextMenu.y,
+            backgroundColor: 'var(--studio-surface)',
+            borderColor: 'var(--studio-border-strong)',
+          }}
+        >
+          <div
+            className="px-2.5 py-1 text-[9px] font-mono-tech uppercase tracking-wider truncate border-b mb-1"
+            style={{
+              color: 'var(--studio-text-muted)',
+              borderColor: 'var(--studio-border)',
+            }}
+          >
+            {contextNode.name}
+          </div>
+          {(
+            [
+              ['duplicate', 'Duplicate', 'Ctrl+D', Copy],
+              ['bring-front', 'Bring to Front', '', ArrowUpToLine],
+              ['send-back', 'Send to Back', '', ArrowDownToLine],
+              ['wrap-glass', 'Wrap in Glass Card', '', Sparkles],
+              ['copy-react', 'Copy React + TW4', '', Code2],
+              ['copy-svg', 'Copy Node SVG', '', FileCode2],
+              [
+                'toggle-lock',
+                contextNode.locked ? 'Unlock Layer' : 'Lock Layer',
+                '',
+                contextNode.locked ? Unlock : Lock,
+              ],
+              ['delete', 'Delete Layer', 'Del', Trash2],
+            ] as const
+          ).map(([action, label, shortcut, Icon]) => (
+            <button
+              key={action}
+              type="button"
+              data-testid={`ctx-${action}`}
+              onClick={() => {
+                onContextAction(contextNode.id, action);
+                setContextMenu(null);
+              }}
+              className={`w-full h-7 px-2 rounded-lg flex items-center justify-between text-[11px] font-medium transition-colors cursor-pointer ${
+                action === 'delete'
+                  ? 'text-rose-400 hover:bg-rose-500/15'
+                  : 'hover:bg-white/10'
+              }`}
+              style={{
+                color: action === 'delete' ? undefined : 'var(--studio-text)',
+              }}
+            >
+              <span className="flex items-center gap-2">
+                <Icon size={12} strokeWidth={1.5} />
+                <span>{label}</span>
+              </span>
+              {shortcut && (
+                <span className="font-mono-tech text-[9px] opacity-55">
+                  {shortcut}
+                </span>
+              )}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {/* Floating Collapsible Interactive Canvas Minimap (Bottom-Right) */}
+      <div
+        data-testid="canvas-minimap"
+        onPointerDown={(e) => e.stopPropagation()}
+        className="hidden lg:block absolute right-3 bottom-3 z-30 rounded-xl border backdrop-blur-md overflow-hidden shadow-xl"
+        style={{
+          backgroundColor: 'color-mix(in srgb, var(--studio-surface) 90%, transparent)',
+          borderColor: 'var(--studio-border-strong)',
+        }}
+      >
+        <div
+          className="h-6 px-2 border-b flex items-center justify-between gap-2"
+          style={{ borderColor: 'var(--studio-border)' }}
+        >
+          <span className="font-mono-tech text-[9px] uppercase tracking-wider flex items-center gap-1" style={{ color: 'var(--studio-text-muted)' }}>
+            <MapIcon size={10} />
+            <span>Map · {Math.round(viewport.zoom * 100)}%</span>
+          </span>
+          <button
+            type="button"
+            onClick={() => setMinimapOpen((v) => !v)}
+            title={minimapOpen ? 'Collapse Minimap' : 'Expand Minimap'}
+            className="w-4 h-4 rounded flex items-center justify-center hover:bg-white/10 cursor-pointer"
+            style={{ color: 'var(--studio-text-muted)' }}
+          >
+            <Minimize2 size={10} />
+          </button>
+        </div>
+        {minimapOpen && (
+          <div
+            onPointerDown={panFromMinimapEvent}
+            onPointerMove={(e) => {
+              if (e.buttons === 1) panFromMinimapEvent(e);
+            }}
+            className="relative cursor-crosshair overflow-hidden"
+            style={{
+              width: miniW,
+              height: miniH,
+              backgroundColor: 'var(--studio-canvas)',
+            }}
+          >
+            {/* Miniature Artboard */}
+            <div
+              className="absolute rounded-[2px] border"
+              style={{
+                left: miniOffsetX,
+                top: miniOffsetY,
+                width: doc.artboard.width * miniScale,
+                height: doc.artboard.height * miniScale,
+                backgroundColor: doc.tokens.surfaceCard,
+                borderColor: 'rgba(255,255,255,0.16)',
+              }}
+            >
+              {doc.nodes
+                .filter((n) => n.visible)
+                .map((n) => (
+                  <div
+                    key={`mm-${n.id}`}
+                    className="absolute"
+                    style={{
+                      left: (n.x - doc.artboard.x) * miniScale,
+                      top: (n.y - doc.artboard.y) * miniScale,
+                      width: Math.max(2, n.width * miniScale),
+                      height: Math.max(1.5, n.height * miniScale),
+                      backgroundColor: selectedIds.includes(n.id)
+                        ? '#06B6D4'
+                        : n.type === 'button'
+                          ? doc.tokens.brandPrimary
+                          : 'rgba(148, 163, 184, 0.38)',
+                      borderRadius: n.type === 'ellipse' ? 999 : 1,
+                    }}
+                  />
+                ))}
+            </div>
+
+            {/* Live Viewport Lens */}
+            <div
+              className="absolute pointer-events-none rounded-[2px]"
+              style={{
+                left: miniOffsetX + lensCanvasX * miniScale,
+                top: miniOffsetY + lensCanvasY * miniScale,
+                width: Math.max(12, lensCanvasW * miniScale),
+                height: Math.max(10, lensCanvasH * miniScale),
+                border: `1.5px solid ${accentBorderColor}`,
+                backgroundColor: 'rgba(99, 102, 241, 0.14)',
+              }}
+            />
+          </div>
+        )}
+      </div>
+
       {/* Bottom Floating Precision Telemetry Pill */}
       <div
-        className="absolute bottom-3 left-1/2 -translate-x-1/2 z-20 h-7 px-3.5 rounded-full border flex items-center gap-3 text-[10px] font-mono-tech whitespace-nowrap backdrop-blur-md pointer-events-none"
+        className="absolute bottom-3 left-9 z-20 h-7 px-3.5 rounded-full border flex items-center gap-3 text-[10px] font-mono-tech whitespace-nowrap backdrop-blur-md pointer-events-none"
         style={{
           backgroundColor: 'color-mix(in srgb, var(--studio-surface) 88%, transparent)',
           borderColor: 'var(--studio-border-strong)',
           color: 'var(--studio-text-secondary)',
         }}
       >
-        <span className="min-w-[84px]">
+        <span className="min-w-[82px]">
           X:{pointerCanvas.x}  Y:{pointerCanvas.y}
         </span>
         <span className="opacity-35">|</span>
-        <span className="hidden md:inline">{labels.canvasHint}</span>
+        <span className="hidden md:inline">
+          {activeTool === 'pen' ? labels.penHint : labels.canvasHint}
+        </span>
         <span className="hidden md:inline opacity-35">|</span>
         <span className="flex items-center gap-1.5" style={{ color: 'var(--studio-cyan)' }}>
           <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
