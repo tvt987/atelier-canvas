@@ -120,6 +120,20 @@ export const COMMAND_CATALOG: CommandItem[] = [
     keywords: ['tokyo', 'bauhaus', 'cobalt', 'lime', 'theme'],
   },
   {
+    id: 'open-variant-matrix',
+    title: 'Open Component Variant Matrix & WCAG 2.1 Contrast Audit',
+    subtitle: 'Inspect 4×3×4 UI variants, 1-click Auto-Fix contrast & export React CVA / SwiftUI',
+    category: 'mode',
+    keywords: ['variant', 'matrix', 'component', 'wcag', 'contrast', 'audit', 'cva', 'swiftui', 'autofix', 'button', 'badge', 'input'],
+  },
+  {
+    id: 'toggle-canvas-backdrop',
+    title: 'Toggle Light Studio Canvas (#F4F5F7) / Dark Figma Canvas',
+    subtitle: 'Switch canvas backdrop between Daylight Light UI and Obsidian Dark surface',
+    category: 'layout',
+    keywords: ['daylight', 'light', 'dark', 'obsidian', 'canvas', 'backdrop', 'figma', 'surface'],
+  },
+  {
     id: 'open-token-compiler',
     title: 'Multi-Platform Design Token Compiler (Tailwind v4 / TS / SwiftUI / Kotlin)',
     subtitle: 'Compile active W3C tokens to Web, React, iOS & Android with WCAG audit',

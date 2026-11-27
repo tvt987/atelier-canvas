@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { Cpu, Download } from 'lucide-react';
+import { Cpu, Download, Grid2X2 } from 'lucide-react';
 import type { DesignTokens, DocumentState } from '../types/canvas';
 import {
   COLOR_TOKEN_META,
@@ -19,6 +19,7 @@ interface DesignTokensStudioProps {
   doc: DocumentState;
   onUpdateTokens: (nextTokens: DesignTokens) => void;
   onOpenTokenCompiler: () => void;
+  onOpenVariantMatrix: () => void;
   labels: StudioLabels;
 }
 
@@ -26,6 +27,7 @@ export function DesignTokensStudio({
   doc,
   onUpdateTokens,
   onOpenTokenCompiler,
+  onOpenVariantMatrix,
   labels,
 }: DesignTokensStudioProps) {
   const [tokenExportNotice, setTokenExportNotice] = useState<string | null>(null);
@@ -43,6 +45,35 @@ export function DesignTokensStudio({
       data-testid="design-tokens-studio"
       className="flex-1 overflow-y-auto studio-scroll p-3 space-y-4"
     >
+      {/* Component Variant Matrix & WCAG 2.1 Audit Launch Banner */}
+      <button
+        type="button"
+        data-testid="btn-launch-variant-matrix"
+        onClick={onOpenVariantMatrix}
+        className="w-full p-2.5 rounded-xl border text-left transition-all cursor-pointer flex items-center justify-between gap-2 hover:brightness-110"
+        style={{
+          background:
+            'linear-gradient(135deg, rgba(16,185,129,0.2), rgba(99,102,241,0.18))',
+          borderColor: 'rgba(16, 185, 129, 0.5)',
+        }}
+      >
+        <div className="min-w-0">
+          <div className="flex items-center gap-1.5 text-[11px] font-semibold">
+            <Grid2X2 size={12} className="text-emerald-400 shrink-0" />
+            <span className="truncate">Component Variant Matrix</span>
+          </div>
+          <div
+            className="font-mono-tech text-[9.5px] mt-0.5 truncate"
+            style={{ color: 'var(--studio-text-secondary)' }}
+          >
+            4×3×4 Variants · WCAG Auto-Fix · CVA / SwiftUI
+          </div>
+        </div>
+        <span className="font-mono-tech text-[9px] font-bold px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-400 border border-emerald-400/35 shrink-0">
+          v6.0
+        </span>
+      </button>
+
       {/* Multi-Platform Compiler Launch Banner */}
       <button
         type="button"
@@ -56,16 +87,19 @@ export function DesignTokensStudio({
         }}
       >
         <div className="min-w-0">
-          <div className="flex items-center gap-1.5 text-[11px] font-semibold text-white">
-            <Cpu size={12} className="text-cyan-300 shrink-0" />
+          <div className="flex items-center gap-1.5 text-[11px] font-semibold">
+            <Cpu size={12} className="text-cyan-400 shrink-0" />
             <span className="truncate">Multi-Platform Token Compiler</span>
           </div>
-          <div className="font-mono-tech text-[9.5px] text-cyan-200/90 mt-0.5 truncate">
+          <div
+            className="font-mono-tech text-[9.5px] mt-0.5 truncate"
+            style={{ color: 'var(--studio-text-secondary)' }}
+          >
             Tailwind v4 · TS · SwiftUI · Compose KT
           </div>
         </div>
-        <span className="font-mono-tech text-[9px] font-bold px-1.5 py-0.5 rounded bg-cyan-500/20 text-cyan-200 border border-cyan-400/35 shrink-0">
-          v5.0
+        <span className="font-mono-tech text-[9px] font-bold px-1.5 py-0.5 rounded bg-cyan-500/20 text-cyan-400 border border-cyan-400/35 shrink-0">
+          W3C
         </span>
       </button>
 

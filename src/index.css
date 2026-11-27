@@ -28,24 +28,41 @@
   }
 
   html.light {
-    --studio-canvas: #ECEEF2;
+    --studio-canvas: #F4F5F7;
     --studio-surface: #FFFFFF;
-    --studio-surface-2: #F6F7FA;
-    --studio-surface-hover: #EDEFF4;
+    --studio-surface-2: #F8F9FB;
+    --studio-surface-hover: #EBEEF3;
     --studio-border: rgba(15, 23, 42, 0.09);
     --studio-border-strong: rgba(15, 23, 42, 0.16);
     --studio-text: #0F172A;
     --studio-text-secondary: #475569;
-    --studio-text-muted: #7C8798;
+    --studio-text-muted: #64748B;
     --studio-accent: #4F46E5;
     --studio-accent-soft: rgba(79, 70, 229, 0.11);
     --studio-cyan: #0891B2;
     --studio-proto: #059669;
     --studio-snap: #E11D48;
-    --studio-grid-dot: rgba(15, 23, 42, 0.13);
+    --studio-grid-dot: rgba(15, 23, 42, 0.14);
     --studio-grid-major: rgba(15, 23, 42, 0.045);
-    --studio-ruler-bg: #F7F8FB;
-    --studio-ruler-tick: rgba(15, 23, 42, 0.22);
+    --studio-ruler-bg: #FFFFFF;
+    --studio-ruler-tick: rgba(15, 23, 42, 0.24);
+  }
+
+  /* Scoped Dual Daylight (#F4F5F7 Figma Light UI) / Obsidian (#0A0B0E Dark Figma) Canvas Stage Backdrop */
+  [data-canvas-backdrop='daylight'] {
+    --studio-canvas: #F4F5F7;
+    --studio-grid-dot: rgba(15, 23, 42, 0.14);
+    --studio-grid-major: rgba(15, 23, 42, 0.045);
+    --studio-ruler-bg: #FFFFFF;
+    --studio-ruler-tick: rgba(15, 23, 42, 0.24);
+  }
+
+  [data-canvas-backdrop='obsidian'] {
+    --studio-canvas: #0A0B0E;
+    --studio-grid-dot: rgba(255, 255, 255, 0.09);
+    --studio-grid-major: rgba(255, 255, 255, 0.035);
+    --studio-ruler-bg: #0E1015;
+    --studio-ruler-tick: rgba(255, 255, 255, 0.18);
   }
 
   * {

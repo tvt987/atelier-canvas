@@ -21,8 +21,19 @@ export default defineConfig({
           if (id.includes('node_modules/lucide-react')) {
             return 'vendor-icons';
           }
+          if (id.includes('componentVariantEngine')) {
+            return 'variant-matrix-engine';
+          }
           if (id.includes('/src/engines/') || id.includes('\\src\\engines\\')) {
             return 'engines';
+          }
+          if (
+            id.includes('/src/components/InspectorPanel') ||
+            id.includes('\\src\\components\\InspectorPanel') ||
+            id.includes('/src/components/LayersPanel') ||
+            id.includes('\\src\\components\\LayersPanel')
+          ) {
+            return 'studio-panels';
           }
           return undefined;
         },

@@ -7,6 +7,7 @@ import {
   Cpu,
   Download,
   FolderOpen,
+  Grid2X2,
   History,
   Maximize2,
   Minus,
@@ -25,7 +26,13 @@ import {
   Undo2,
   Users,
 } from 'lucide-react';
-import type { ChromeTheme, DesignSnapshot, Locale, UiMode } from '../types/canvas';
+import type {
+  CanvasBackdrop,
+  ChromeTheme,
+  DesignSnapshot,
+  Locale,
+  UiMode,
+} from '../types/canvas';
 import { TEMPLATE_PRESETS } from '../engines/templates';
 import type { StudioLabels } from '../i18n/labels';
 
@@ -61,9 +68,12 @@ interface TopBarProps {
   lastSyncLatencyMs: number | null;
   chromeTheme: ChromeTheme;
   onToggleChromeTheme: () => void;
+  canvasBackdrop: CanvasBackdrop;
+  onToggleCanvasBackdrop: () => void;
   locale: Locale;
   onToggleLocale: () => void;
   onOpenCommandBar: () => void;
+  onOpenVariantMatrix: () => void;
   onOpenTokenCompiler: () => void;
   onOpenExportModal: () => void;
   labels: StudioLabels;
@@ -101,9 +111,12 @@ export function TopBar({
   lastSyncLatencyMs,
   chromeTheme,
   onToggleChromeTheme,
+  canvasBackdrop,
+  onToggleCanvasBackdrop,
   locale,
   onToggleLocale,
   onOpenCommandBar,
+  onOpenVariantMatrix,
   onOpenTokenCompiler,
   onOpenExportModal,
   labels,
@@ -153,9 +166,9 @@ export function TopBar({
       />
 
       {/* Left: Brand Identity + Template Selector + Undo/Redo + File/History */}
-      <div className="flex items-center gap-1 sm:gap-1.5 min-w-0">
+      <div data-testid="topbar-left" className="flex items-center gap-1 sm:gap-1.5 shrink-0">
         <div
-          className="flex items-center gap-2 sm:pr-2 sm:border-r shrink-0"
+          className="flex items-center gap-1.5 sm:pr-2 sm:border-r shrink-0"
           style={{ borderColor: 'var(--studio-border)' }}
         >
           <div
@@ -190,7 +203,7 @@ export function TopBar({
                 backgroundColor: 'rgba(6, 182, 212, 0.1)',
               }}
             >
-              v5.0 PRO
+              v6.0
             </span>
           </div>
         </div>
@@ -217,7 +230,7 @@ export function TopBar({
             <span className="font-mono-tech sm:hidden text-[10px] font-semibold">
               {activeTemplate.code}
             </span>
-            <span className="hidden sm:inline truncate max-w-[110px] xl:max-w-[155px]">
+            <span className="hidden sm:inline truncate max-w-[100px] xl:max-w-[120px] 2xl:max-w-[155px]">
               {activeTemplate.code}. {activeTemplate.name}
             </span>
             <ChevronDown size={12} strokeWidth={1.5} style={{ color: 'var(--studio-text-muted)' }} />
@@ -329,7 +342,7 @@ export function TopBar({
             }}
           >
             <History size={12} strokeWidth={1.5} />
-            <span className="hidden xl:inline">{labels.snapshotsBtn}</span>
+            <span className="hidden 2xl:inline">{labels.snapshotsBtn}</span>
             <span
               className="px-1 rounded text-[9px] font-semibold"
               style={{
@@ -500,7 +513,7 @@ export function TopBar({
       </div>
 
       {/* Center: 3-Mode Switcher + Present Prototype + Zoom */}
-      <div className="flex items-center gap-1 sm:gap-1.5 shrink-0">
+      <div data-testid="topbar-center" className="flex items-center gap-1 sm:gap-1.5 shrink-0">
         <div
           className="h-8 p-0.5 rounded-lg border flex items-center gap-0.5"
           style={{
@@ -534,7 +547,8 @@ export function TopBar({
             }}
           >
             <Sparkles size={11} strokeWidth={1.7} />
-            <span className="hidden sm:inline">{labels.prototypeMode}</span>
+            <span className="hidden 2xl:inline">{labels.prototypeMode}</span>
+            <span className="hidden sm:inline 2xl:hidden">PROTO</span>
           </button>
           <button
             type="button"
@@ -548,7 +562,8 @@ export function TopBar({
             }}
           >
             <Code2 size={11} strokeWidth={1.7} />
-            <span className="hidden sm:inline">{labels.devMode}</span>
+            <span className="hidden 2xl:inline">{labels.devMode}</span>
+            <span className="hidden sm:inline 2xl:hidden">DEV</span>
           </button>
         </div>
 
@@ -557,16 +572,17 @@ export function TopBar({
           data-testid="btn-present"
           onClick={onOpenPrototypePlayer}
           title="Present Prototype — Interactive Click-Through Player"
-          className="h-8 px-2 sm:px-2.5 rounded-lg border text-[11px] font-semibold flex items-center gap-1.5 transition-all cursor-pointer shrink-0"
+          className="h-8 px-2 rounded-lg border text-[11px] font-semibold flex items-center gap-1.5 transition-all cursor-pointer shrink-0"
           style={{
             background:
               'linear-gradient(135deg, rgba(16,185,129,0.22), rgba(6,182,212,0.18))',
             borderColor: 'rgba(16,185,129,0.52)',
-            color: '#34D399',
+            color: chromeTheme === 'light' ? '#047857' : '#34D399',
           }}
         >
           <Play size={11} fill="currentColor" strokeWidth={1.6} />
-          <span className="hidden md:inline">{labels.presentBtn}</span>
+          <span className="hidden 2xl:inline">{labels.presentBtn}</span>
+          <span className="hidden lg:inline 2xl:hidden">Play</span>
         </button>
 
         <div
@@ -617,13 +633,14 @@ export function TopBar({
         </div>
       </div>
 
-      {/* Right: Live Collab Presence, Token Compiler, Enterprise License, Presence, CMD+K, Locale, Theme, Mobile Inspector, Export */}
-      <div className="flex items-center gap-1 shrink-0">
+      {/* Right: Design System Studio Cluster, Live Collab, Dual Canvas Backdrop, Utilities & Export */}
+      <div data-testid="topbar-right" className="flex items-center gap-1 shrink-0">
+        {/* Live Collab Presence Pill */}
         <div
           data-testid="live-collab-badge"
           data-active-tabs={activeTabs}
           title={`BroadcastChannel(atelier_canvas_collab_v5) · ${crdtRevisions} rev${lastSyncLatencyMs !== null ? ` · ${lastSyncLatencyMs}ms sync` : ''}`}
-          className="hidden xl:flex h-8 px-2.5 rounded-lg border items-center gap-1.5 font-mono-tech text-[10px] font-semibold whitespace-nowrap shrink-0"
+          className="hidden xl:flex h-8 px-2 rounded-lg border items-center gap-1.5 font-mono-tech text-[10px] font-semibold whitespace-nowrap shrink-0"
           style={{
             backgroundColor:
               activeTabs >= 2
@@ -633,7 +650,12 @@ export function TopBar({
               activeTabs >= 2
                 ? 'rgba(16, 185, 129, 0.5)'
                 : 'var(--studio-border)',
-            color: activeTabs >= 2 ? '#34D399' : 'var(--studio-cyan)',
+            color:
+              activeTabs >= 2
+                ? chromeTheme === 'light'
+                  ? '#047857'
+                  : '#34D399'
+                : 'var(--studio-cyan)',
           }}
         >
           <span
@@ -641,113 +663,181 @@ export function TopBar({
               activeTabs >= 2 ? 'bg-emerald-400 animate-pulse' : 'bg-cyan-400'
             }`}
           />
-          <span>
+          <span className="hidden 2xl:inline">
             {labels.liveCollabLabel} · {activeTabs} {activeTabs === 1 ? 'Tab' : 'Tabs'}
+          </span>
+          <span className="2xl:hidden">
+            {activeTabs} {activeTabs === 1 ? 'Tab' : 'Tabs'}
           </span>
         </div>
 
-        <button
-          type="button"
-          data-testid="btn-open-token-compiler"
-          onClick={onOpenTokenCompiler}
-          title="Multi-Platform Design Token Compiler (Tailwind v4 / TypeScript / SwiftUI / Jetpack Compose)"
-          className="flex h-8 px-1.5 sm:px-2 rounded-lg border items-center gap-1.5 text-[10px] font-mono-tech font-semibold transition-all cursor-pointer shrink-0 hover:brightness-110"
-          style={{
-            background:
-              'linear-gradient(135deg, rgba(6,182,212,0.16), rgba(99,102,241,0.16))',
-            borderColor: 'rgba(6,182,212,0.45)',
-            color: 'var(--studio-cyan)',
-          }}
-        >
-          <Cpu size={12} strokeWidth={1.8} />
-          <span className="hidden lg:inline">{labels.compileTokensBtn}</span>
-        </button>
-
-        <button
-          type="button"
-          data-testid="btn-enterprise-license"
-          onClick={onOpenEnterpriseModal}
-          title="Enterprise Super VIP Pro License · 13.900.000 VND (MBBank VietQR)"
-          className="hidden sm:flex h-8 px-2 rounded-lg border items-center gap-1.5 text-[10px] font-mono-tech font-semibold transition-all cursor-pointer shrink-0"
-          style={{
-            background:
-              'linear-gradient(135deg, rgba(245,158,11,0.16), rgba(99,102,241,0.16))',
-            borderColor: 'rgba(245,158,11,0.45)',
-            color: '#FBBF24',
-          }}
-        >
-          <ShieldCheck size={12} strokeWidth={1.8} />
-          <span className="hidden lg:inline">{labels.enterpriseBtn}</span>
-        </button>
-
-        <button
-          type="button"
-          data-testid="btn-co-designer"
-          onClick={onToggleCoDesigner}
-          title={`Yjs CRDT (${crdtRevisions} ops) — Simulate Co-Designer`}
-          className="hidden sm:flex w-8 h-8 rounded-lg border items-center justify-center transition-colors cursor-pointer"
-          style={{
-            backgroundColor: coDesignerActive
-              ? 'rgba(6, 182, 212, 0.14)'
-              : 'var(--studio-surface-2)',
-            borderColor: coDesignerActive
-              ? 'rgba(6, 182, 212, 0.5)'
-              : 'var(--studio-border)',
-            color: coDesignerActive ? 'var(--studio-cyan)' : 'var(--studio-text-secondary)',
-          }}
-        >
-          <Users size={13} strokeWidth={1.5} />
-        </button>
-
-        <button
-          type="button"
-          data-testid="btn-cmdk"
-          onClick={onOpenCommandBar}
-          title="AI Command Palette (Ctrl+K)"
-          className="hidden sm:flex h-8 px-2 rounded-lg border items-center gap-1 text-[10px] font-mono-tech transition-colors cursor-pointer"
+        {/* Grouped Design System Tools Pill: Variant Matrix + Token Compiler */}
+        <div
+          className="h-8 p-0.5 rounded-lg border flex items-center gap-0.5 shrink-0"
           style={{
             backgroundColor: 'var(--studio-surface-2)',
             borderColor: 'var(--studio-border)',
-            color: 'var(--studio-text-secondary)',
           }}
         >
-          <Command size={12} strokeWidth={1.5} />
-          <span className="hidden md:inline">K</span>
-        </button>
+          <button
+            type="button"
+            data-testid="btn-open-variant-matrix"
+            onClick={onOpenVariantMatrix}
+            title="Component Variant Matrix & Live WCAG 2.1 Contrast Audit (CVA + SwiftUI)"
+            className="h-full px-1.5 sm:px-2 rounded-md text-[10px] font-mono-tech font-semibold flex items-center gap-1 transition-all cursor-pointer hover:brightness-110"
+            style={{
+              background:
+                'linear-gradient(135deg, rgba(16,185,129,0.2), rgba(99,102,241,0.18))',
+              color: chromeTheme === 'light' ? '#047857' : '#34D399',
+            }}
+          >
+            <Grid2X2 size={12} strokeWidth={1.8} />
+            <span className="hidden lg:inline">{labels.variantMatrixBtn}</span>
+          </button>
 
+          <button
+            type="button"
+            data-testid="btn-open-token-compiler"
+            onClick={onOpenTokenCompiler}
+            title="Multi-Platform Design Token Compiler (Tailwind v4 / TypeScript / SwiftUI / Jetpack Compose)"
+            className="h-full px-1.5 sm:px-2 rounded-md text-[10px] font-mono-tech font-semibold flex items-center gap-1 transition-all cursor-pointer hover:brightness-110"
+            style={{
+              background:
+                'linear-gradient(135deg, rgba(6,182,212,0.16), rgba(99,102,241,0.16))',
+              color: 'var(--studio-cyan)',
+            }}
+          >
+            <Cpu size={12} strokeWidth={1.8} />
+            <span className="hidden xl:inline">{labels.compileTokensBtn}</span>
+          </button>
+        </div>
+
+        {/* Dual Light Studio Canvas (#F4F5F7) <-> Dark Figma Canvas Backdrop Switch */}
         <button
           type="button"
-          data-testid="btn-locale"
-          onClick={onToggleLocale}
-          title="Switch UI Language (EN / VI)"
-          className="h-8 px-1.5 sm:px-2 rounded-lg border font-mono-tech text-[10px] font-semibold tracking-wider cursor-pointer"
+          data-testid="btn-canvas-backdrop"
+          data-backdrop={canvasBackdrop}
+          onClick={onToggleCanvasBackdrop}
+          title="Toggle Light Studio Canvas (#F4F5F7 Figma Light UI) / Dark Figma Canvas"
+          className="h-8 px-2 rounded-lg border flex items-center gap-1.5 font-mono-tech text-[10px] font-semibold transition-all cursor-pointer shrink-0"
           style={{
-            backgroundColor: 'var(--studio-surface-2)',
-            borderColor: 'var(--studio-border)',
-            color: 'var(--studio-text-secondary)',
+            backgroundColor:
+              canvasBackdrop === 'daylight'
+                ? '#F4F5F7'
+                : 'var(--studio-surface-2)',
+            borderColor:
+              canvasBackdrop === 'daylight'
+                ? 'rgba(79, 70, 229, 0.45)'
+                : 'var(--studio-border)',
+            color:
+              canvasBackdrop === 'daylight'
+                ? '#0F172A'
+                : 'var(--studio-text-secondary)',
           }}
         >
-          {locale.toUpperCase()}
-        </button>
-
-        <button
-          type="button"
-          data-testid="btn-theme-chrome"
-          onClick={onToggleChromeTheme}
-          title="Toggle Obsidian / Light Studio Chrome"
-          className="w-8 h-8 rounded-lg border flex items-center justify-center cursor-pointer"
-          style={{
-            backgroundColor: 'var(--studio-surface-2)',
-            borderColor: 'var(--studio-border)',
-            color: 'var(--studio-text-secondary)',
-          }}
-        >
-          {chromeTheme === 'dark' ? (
-            <Sun size={14} strokeWidth={1.5} />
+          {canvasBackdrop === 'daylight' ? (
+            <Sun size={12} strokeWidth={1.8} className="text-amber-500 shrink-0" />
           ) : (
-            <Moon size={14} strokeWidth={1.5} />
+            <Moon size={12} strokeWidth={1.8} className="text-indigo-400 shrink-0" />
           )}
+          <span className="hidden 2xl:inline">
+            {canvasBackdrop === 'daylight'
+              ? labels.daylightCanvasLabel
+              : labels.obsidianCanvasLabel}
+          </span>
         </button>
+
+        {/* Studio Utility Cluster */}
+        <div
+          className="hidden sm:flex items-center gap-1 pl-1 border-l"
+          style={{ borderColor: 'var(--studio-border)' }}
+        >
+          <button
+            type="button"
+            data-testid="btn-enterprise-license"
+            onClick={onOpenEnterpriseModal}
+            title="Enterprise Super VIP Pro License · 13.900.000 VND (MBBank VietQR)"
+            className="h-8 px-2 rounded-lg border flex items-center gap-1.5 text-[10px] font-mono-tech font-semibold transition-all cursor-pointer shrink-0"
+            style={{
+              background:
+                'linear-gradient(135deg, rgba(245,158,11,0.16), rgba(99,102,241,0.16))',
+              borderColor: 'rgba(245,158,11,0.45)',
+              color: chromeTheme === 'light' ? '#B45309' : '#FBBF24',
+            }}
+          >
+            <ShieldCheck size={12} strokeWidth={1.8} />
+            <span className="hidden 2xl:inline">{labels.enterpriseBtn}</span>
+          </button>
+
+          <button
+            type="button"
+            data-testid="btn-co-designer"
+            onClick={onToggleCoDesigner}
+            title={`Yjs CRDT (${crdtRevisions} ops) — Simulate Co-Designer`}
+            className="w-8 h-8 rounded-lg border flex items-center justify-center transition-colors cursor-pointer"
+            style={{
+              backgroundColor: coDesignerActive
+                ? 'rgba(6, 182, 212, 0.14)'
+                : 'var(--studio-surface-2)',
+              borderColor: coDesignerActive
+                ? 'rgba(6, 182, 212, 0.5)'
+                : 'var(--studio-border)',
+              color: coDesignerActive ? 'var(--studio-cyan)' : 'var(--studio-text-secondary)',
+            }}
+          >
+            <Users size={13} strokeWidth={1.5} />
+          </button>
+
+          <button
+            type="button"
+            data-testid="btn-cmdk"
+            onClick={onOpenCommandBar}
+            title="AI Command Palette (Ctrl+K)"
+            className="h-8 px-2 rounded-lg border flex items-center gap-1 text-[10px] font-mono-tech transition-colors cursor-pointer"
+            style={{
+              backgroundColor: 'var(--studio-surface-2)',
+              borderColor: 'var(--studio-border)',
+              color: 'var(--studio-text-secondary)',
+            }}
+          >
+            <Command size={12} strokeWidth={1.5} />
+            <span className="hidden md:inline">K</span>
+          </button>
+
+          <button
+            type="button"
+            data-testid="btn-locale"
+            onClick={onToggleLocale}
+            title="Switch UI Language (EN / VI)"
+            className="h-8 px-2 rounded-lg border font-mono-tech text-[10px] font-semibold tracking-wider cursor-pointer"
+            style={{
+              backgroundColor: 'var(--studio-surface-2)',
+              borderColor: 'var(--studio-border)',
+              color: 'var(--studio-text-secondary)',
+            }}
+          >
+            {locale.toUpperCase()}
+          </button>
+
+          <button
+            type="button"
+            data-testid="btn-theme-chrome"
+            onClick={onToggleChromeTheme}
+            title="Toggle Full Light Studio UI (#F4F5F7) / Obsidian Dark Studio Chrome"
+            className="w-8 h-8 rounded-lg border flex items-center justify-center cursor-pointer"
+            style={{
+              backgroundColor: 'var(--studio-surface-2)',
+              borderColor: 'var(--studio-border)',
+              color: 'var(--studio-text-secondary)',
+            }}
+          >
+            {chromeTheme === 'dark' ? (
+              <Sun size={14} strokeWidth={1.5} />
+            ) : (
+              <Moon size={14} strokeWidth={1.5} />
+            )}
+          </button>
+        </div>
 
         <button
           type="button"

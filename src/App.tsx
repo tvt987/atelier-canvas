@@ -2,6 +2,7 @@ import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } fro
 import type {
   Artboard,
   AutoLayoutConfig,
+  CanvasBackdrop,
   CanvasNode,
   ChromeTheme,
   DesignSnapshot,
@@ -84,6 +85,9 @@ const LazyEnterpriseLicenseModal = lazy(() =>
   })),
 );
 const LazyTokenCompilerModal = lazy(() => import('./components/TokenCompilerModal'));
+const LazyComponentVariantStudio = lazy(
+  () => import('./components/ComponentVariantStudio'),
+);
 
 const TOOL_HOTKEYS: Record<string, ToolType> = {
   v: 'select',
@@ -141,6 +145,7 @@ export function App() {
   const [inspectorTab, setInspectorTab] = useState<InspectorTab>('design');
   const [leftTab, setLeftTab] = useState<LeftRailTab>('layers');
   const [chromeTheme, setChromeTheme] = useState<ChromeTheme>('dark');
+  const [canvasBackdrop, setCanvasBackdrop] = useState<CanvasBackdrop>('obsidian');
   const [locale, setLocale] = useState<Locale>('en');
   const [layersOpen, setLayersOpen] = useState(true);
   const [mobileInspectorOpen, setMobileInspectorOpen] = useState(false);
@@ -153,6 +158,7 @@ export function App() {
   const [commandOpen, setCommandOpen] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
   const [tokenCompilerOpen, setTokenCompilerOpen] = useState(false);
+  const [variantMatrixOpen, setVariantMatrixOpen] = useState(false);
   const [playerOpen, setPlayerOpen] = useState(false);
   const [enterpriseOpen, setEnterpriseOpen] = useState(false);
   const [coDesignerActive, setCoDesignerActive] = useState(false);
@@ -289,8 +295,13 @@ export function App() {
   }, [chromeTheme]);
 
   const toggleChromeTheme = useCallback(() => {
-    const apply = () =>
-      setChromeTheme((prev) => (prev === 'dark' ? 'light' : 'dark'));
+    const apply = () => {
+      setChromeTheme((prev) => {
+        const next: ChromeTheme = prev === 'dark' ? 'light' : 'dark';
+        setCanvasBackdrop(next === 'light' ? 'daylight' : 'obsidian');
+        return next;
+      });
+    };
 
     const docWithTransition = document as Document & {
       startViewTransition?: (cb: () => void) => void;
@@ -301,6 +312,18 @@ export function App() {
       apply();
     }
   }, []);
+
+  const toggleCanvasBackdrop = useCallback(() => {
+    setCanvasBackdrop((prev) => {
+      const next: CanvasBackdrop = prev === 'obsidian' ? 'daylight' : 'obsidian';
+      notify(
+        next === 'daylight'
+          ? 'Light Studio Canvas (#F4F5F7 Figma Light UI)'
+          : 'Dark Figma Canvas (#0A0B0E Obsidian)',
+      );
+      return next;
+    });
+  }, [notify]);
 
   const commitDocument = useCallback((nextDoc: DocumentState) => {
     setLiveNodesOverride(null);
@@ -942,6 +965,14 @@ export function App() {
         setPlayerOpen(true);
         return;
       }
+      if (commandId === 'open-variant-matrix') {
+        setVariantMatrixOpen(true);
+        return;
+      }
+      if (commandId === 'toggle-canvas-backdrop') {
+        toggleCanvasBackdrop();
+        return;
+      }
       if (commandId === 'open-token-compiler') {
         setTokenCompilerOpen(true);
         return;
@@ -1004,6 +1035,7 @@ export function App() {
       handleSelectTemplate,
       handleUpdateTokens,
       notify,
+      toggleCanvasBackdrop,
     ],
   );
 
@@ -1191,9 +1223,12 @@ export function App() {
         lastSyncLatencyMs={collabTelemetry.lastSyncLatencyMs}
         chromeTheme={chromeTheme}
         onToggleChromeTheme={toggleChromeTheme}
+        canvasBackdrop={canvasBackdrop}
+        onToggleCanvasBackdrop={toggleCanvasBackdrop}
         locale={locale}
         onToggleLocale={() => setLocale((l) => (l === 'en' ? 'vi' : 'en'))}
         onOpenCommandBar={() => setCommandOpen(true)}
+        onOpenVariantMatrix={() => setVariantMatrixOpen(true)}
         onOpenTokenCompiler={() => setTokenCompilerOpen(true)}
         onOpenExportModal={() => setExportOpen(true)}
         labels={labels}
@@ -1245,6 +1280,8 @@ export function App() {
           uiMode={uiMode}
           spacePressed={spacePressed}
           altPressed={altPressed}
+          canvasBackdrop={canvasBackdrop}
+          onToggleCanvasBackdrop={toggleCanvasBackdrop}
           stack3D={stack3D}
           onToggleStack3D={() => setStack3D((v) => !v)}
           breakpoint={breakpoint}
@@ -1282,6 +1319,7 @@ export function App() {
           onAlignSelection={handleAlignSelection}
           onOpenExportModal={() => setExportOpen(true)}
           onOpenTokenCompiler={() => setTokenCompilerOpen(true)}
+          onOpenVariantMatrix={() => setVariantMatrixOpen(true)}
           onOpenPrototypePlayer={() => setPlayerOpen(true)}
           onOpenEnterpriseModal={() => setEnterpriseOpen(true)}
           mobileOpen={mobileInspectorOpen}
@@ -1293,7 +1331,7 @@ export function App() {
       {studioNotice && (
         <div
           data-testid="studio-notice"
-          className="fixed top-14 left-1/2 -translate-x-1/2 z-50 px-3.5 py-1.5 rounded-full border font-mono-tech text-[11px] shadow-2xl backdrop-blur-md pointer-events-none"
+          className="fixed bottom-12 left-1/2 -translate-x-1/2 z-50 px-3.5 py-1.5 rounded-full border font-mono-tech text-[11px] shadow-2xl backdrop-blur-md pointer-events-none whitespace-nowrap"
           style={{
             backgroundColor: 'var(--studio-surface)',
             borderColor: 'var(--studio-cyan)',
@@ -1331,6 +1369,17 @@ export function App() {
           <LazyTokenCompilerModal
             open={tokenCompilerOpen}
             onClose={() => setTokenCompilerOpen(false)}
+            tokens={effectiveDoc.tokens}
+            onUpdateTokens={handleUpdateTokens}
+          />
+        </Suspense>
+      )}
+
+      {variantMatrixOpen && (
+        <Suspense fallback={null}>
+          <LazyComponentVariantStudio
+            open={variantMatrixOpen}
+            onClose={() => setVariantMatrixOpen(false)}
             tokens={effectiveDoc.tokens}
             onUpdateTokens={handleUpdateTokens}
           />

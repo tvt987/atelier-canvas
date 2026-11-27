@@ -15,10 +15,12 @@ import {
   Maximize2,
   Minimize2,
   Monitor,
+  Moon,
   RotateCcw,
   Ruler,
   Smartphone,
   Sparkles,
+  Sun,
   Tablet,
   Trash2,
   Unlock,
@@ -27,6 +29,7 @@ import {
 } from 'lucide-react';
 import type {
   Bounds,
+  CanvasBackdrop,
   CanvasNode,
   CollaboratorCursor,
   DocumentState,
@@ -94,6 +97,8 @@ interface CanvasStageProps {
   uiMode: UiMode;
   spacePressed: boolean;
   altPressed: boolean;
+  canvasBackdrop: CanvasBackdrop;
+  onToggleCanvasBackdrop: () => void;
   stack3D: boolean;
   onToggleStack3D: () => void;
   breakpoint: ViewportBreakpoint;
@@ -195,6 +200,8 @@ export function CanvasStage({
   uiMode,
   spacePressed,
   altPressed,
+  canvasBackdrop,
+  onToggleCanvasBackdrop,
   stack3D,
   onToggleStack3D,
   breakpoint,
@@ -1384,11 +1391,12 @@ export function CanvasStage({
     <div
       ref={stageRef}
       data-testid="canvas-stage"
+      data-canvas-backdrop={canvasBackdrop}
       onPointerDown={handleStagePointerDown}
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
-      className="flex-1 relative overflow-hidden select-none"
+      className="flex-1 relative overflow-hidden select-none transition-colors duration-200"
       style={{
         cursor: cursorStyle,
         backgroundColor: 'var(--studio-canvas)',
@@ -1480,11 +1488,44 @@ export function CanvasStage({
         </button>
       </div>
 
-      {/* Top-Right Floating Canvas HUD: Measure + 3D Stack */}
+      {/* Top-Right Floating Canvas HUD: Daylight/Obsidian Backdrop + Measure + 3D Stack */}
       <div
         onPointerDown={(e) => e.stopPropagation()}
         className="absolute top-8 right-3 z-30 flex items-center gap-1.5"
       >
+        <button
+          type="button"
+          data-testid="btn-stage-backdrop-toggle"
+          onClick={onToggleCanvasBackdrop}
+          title="Switch Canvas Surface: Light Studio (#F4F5F7) / Dark Figma (#0A0B0E)"
+          className="h-7 px-2.5 rounded-lg border backdrop-blur-md font-mono-tech text-[10px] font-semibold flex items-center gap-1.5 transition-all cursor-pointer"
+          style={{
+            backgroundColor:
+              canvasBackdrop === 'daylight'
+                ? 'rgba(255, 255, 255, 0.94)'
+                : 'color-mix(in srgb, var(--studio-surface) 90%, transparent)',
+            borderColor:
+              canvasBackdrop === 'daylight'
+                ? 'rgba(15, 23, 42, 0.16)'
+                : 'var(--studio-border-strong)',
+            color:
+              canvasBackdrop === 'daylight'
+                ? '#0F172A'
+                : 'var(--studio-text-secondary)',
+          }}
+        >
+          {canvasBackdrop === 'daylight' ? (
+            <Sun size={11} className="text-amber-500" />
+          ) : (
+            <Moon size={11} className="text-indigo-400" />
+          )}
+          <span className="hidden sm:inline">
+            {canvasBackdrop === 'daylight'
+              ? labels.daylightCanvasLabel
+              : labels.obsidianCanvasLabel}
+          </span>
+        </button>
+
         <button
           type="button"
           data-testid="btn-toggle-measure"
@@ -1811,9 +1852,14 @@ export function CanvasStage({
                       height: board.height,
                       borderRadius: board.radius,
                       background: boardBg.cssBackground,
-                      boxShadow: isPrimaryActive
-                        ? '0 28px 90px rgba(0, 0, 0, 0.48), 0 0 0 1px rgba(99,102,241,0.28)'
-                        : '0 24px 72px rgba(0, 0, 0, 0.42), 0 0 0 1px rgba(255,255,255,0.08)',
+                      boxShadow:
+                        canvasBackdrop === 'daylight'
+                          ? isPrimaryActive
+                            ? '0 18px 48px rgba(15, 23, 42, 0.16), 0 0 0 1px rgba(79, 70, 229, 0.28)'
+                            : '0 12px 32px rgba(15, 23, 42, 0.11), 0 0 0 1px rgba(15, 23, 42, 0.08)'
+                          : isPrimaryActive
+                            ? '0 28px 90px rgba(0, 0, 0, 0.48), 0 0 0 1px rgba(99,102,241,0.28)'
+                            : '0 24px 72px rgba(0, 0, 0, 0.42), 0 0 0 1px rgba(255,255,255,0.08)',
                     }}
                   >
                     {/* Visual 8px Baseline Micro-Grid Overlay */}

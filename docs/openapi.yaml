@@ -1,11 +1,12 @@
 openapi: 3.1.0
 info:
-  title: Atelier Canvas v5.0 — Collaborative Document & Design Token Compiler API
-  version: 5.0.0
+  title: Atelier Canvas v6.0 — Collaborative Design Studio, Variant WCAG Audit & Token Compiler API
+  version: 6.0.0
   description: >
     Production .NET 10 Minimal API powering optimistic-concurrency vector canvas snapshots
-    (strict vector-clock versioning with HTTP 409 Conflict detection) and W3C Design Tokens
-    Community Group (DTCG) multi-platform compilation with WCAG 2.1 contrast auditing.
+    (strict vector-clock versioning with HTTP 409 Conflict detection), W3C Design Tokens
+    Community Group (DTCG) multi-platform compilation, and full Component Variant Matrix
+    WCAG 2.1 relative-luminance contrast auditing with deterministic color auto-fix recommendations.
   contact:
     name: Truong Van Tinh
     url: https://github.com/tvt987/atelier-canvas
@@ -22,6 +23,8 @@ tags:
     description: Optimistic-concurrency collaborative canvas document snapshot store
   - name: Tokens
     description: W3C DTCG validation, multi-platform code compilation, and WCAG 2.1 auditing
+  - name: VariantAudit
+    description: Full Component Variant Matrix WCAG 2.1 contrast auditing & accessible hex recommendations
 
 paths:
   /health:
@@ -163,6 +166,38 @@ paths:
               schema:
                 $ref: '#/components/schemas/TokenValidationError'
 
+  /api/v1/design/variant-audit:
+    post:
+      tags: [VariantAudit]
+      summary: Audit WCAG 2.1 relative luminance & contrast ratios across a full Component Variant Matrix
+      description: >
+        Evaluates WCAG 2.1 relative luminance and contrast ratios across 3 UI primitives
+        (`action-button`, `status-badge`, `metric-input`) × 4 variants (`primary`, `secondary`,
+        `ghost`, `destructive`) × 3 sizes (`sm`, `md`, `lg`) × 4 states (`default`, `hover`,
+        `focus`, `disabled`) = 144 cells (or explicit `customCells`). Computes mathematically
+        verified foreground/background hex adjustments for any failing cell and returns
+        the overall compliance score percentage and recommended semantic token overrides.
+      operationId: auditComponentVariantMatrix
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/VariantAuditRequest'
+      responses:
+        '200':
+          description: Full component variant matrix WCAG 2.1 contrast audit & accessible color recommendations
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VariantMatrixAuditResponse'
+        '400':
+          description: Invalid W3C design tokens, unsupported targetLevel, unsupported primitive, or malformed custom cell hex
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+
 components:
   schemas:
     HealthResponse:
@@ -177,7 +212,7 @@ components:
           example: AtelierCanvas.Api
         version:
           type: string
-          example: 5.0.0
+          example: 6.0.0
         runtime:
           type: string
           example: .NET 10.0.12
@@ -376,3 +411,210 @@ components:
           type: array
           items:
             type: string
+
+    VariantCellInput:
+      type: object
+      required: [id, primitive, variant, size, state, foregroundHex, backgroundHex]
+      properties:
+        id:
+          type: string
+          example: action-button:primary:md:default
+        primitive:
+          type: string
+          enum: [action-button, status-badge, metric-input]
+        variant:
+          type: string
+          enum: [primary, secondary, ghost, destructive]
+        size:
+          type: string
+          enum: [sm, md, lg]
+        state:
+          type: string
+          enum: [default, hover, focus, disabled]
+        foregroundHex:
+          type: string
+          example: '#FFFFFF'
+        backgroundHex:
+          type: string
+          example: '#6366F1'
+        borderHex:
+          type: string
+          example: '#6366F1'
+
+    VariantAuditRequest:
+      type: object
+      required: [tokens]
+      properties:
+        tokens:
+          type: object
+          description: W3C DTCG JSON document or flat Atelier semantic token object
+          additionalProperties: true
+        targetLevel:
+          type: string
+          enum: [AA, AAA]
+          default: AA
+        primitives:
+          type: array
+          description: Optional subset of primitives; defaults to all 3 (144 cells)
+          items:
+            type: string
+            enum: [action-button, status-badge, metric-input]
+        customCells:
+          type: array
+          description: Optional explicit variant cells to audit instead of generating the full matrix
+          items:
+            $ref: '#/components/schemas/VariantCellInput'
+
+    AccessibleColorRecommendation:
+      type: object
+      required:
+        - recommendedForegroundHex
+        - recommendedBackgroundHex
+        - originalRatio
+        - fixedRatio
+        - fixedGrade
+        - strategy
+      properties:
+        recommendedForegroundHex:
+          type: string
+          example: '#FFFFFF'
+        recommendedBackgroundHex:
+          type: string
+          example: '#4F46E5'
+        originalRatio:
+          type: number
+          format: double
+          example: 4.47
+        fixedRatio:
+          type: number
+          format: double
+          example: 6.29
+        fixedGrade:
+          type: string
+          enum: [AAA, AA, AA-Large, FAIL]
+        strategy:
+          type: string
+          enum:
+            - already-compliant
+            - flip-foreground-ink
+            - adjust-foreground
+            - darken-background
+            - lighten-background
+            - high-contrast-pair
+
+    VariantCellAuditResult:
+      type: object
+      required:
+        - id
+        - primitive
+        - variant
+        - size
+        - state
+        - foregroundHex
+        - backgroundHex
+        - borderHex
+        - foregroundLuminance
+        - backgroundLuminance
+        - contrastRatio
+        - ratioLabel
+        - grade
+        - passesAA
+        - passesAAA
+        - passesTarget
+      properties:
+        id:
+          type: string
+        primitive:
+          type: string
+        variant:
+          type: string
+        size:
+          type: string
+        state:
+          type: string
+        foregroundHex:
+          type: string
+        backgroundHex:
+          type: string
+        borderHex:
+          type: string
+        foregroundLuminance:
+          type: number
+          format: double
+        backgroundLuminance:
+          type: number
+          format: double
+        contrastRatio:
+          type: number
+          format: double
+        ratioLabel:
+          type: string
+          example: '6.29:1'
+        grade:
+          type: string
+          enum: [AAA, AA, AA-Large, FAIL]
+        passesAA:
+          type: boolean
+        passesAAA:
+          type: boolean
+        passesTarget:
+          type: boolean
+        recommendation:
+          oneOf:
+            - $ref: '#/components/schemas/AccessibleColorRecommendation'
+            - type: 'null'
+
+    VariantMatrixAuditResponse:
+      type: object
+      required:
+        - themeId
+        - themeName
+        - targetLevel
+        - targetRatio
+        - totalCells
+        - passingCells
+        - failingCells
+        - aaPassCount
+        - aaaPassCount
+        - complianceScorePercent
+        - recommendedTokenOverrides
+        - cells
+        - auditedAtUtc
+      properties:
+        themeId:
+          type: string
+        themeName:
+          type: string
+        targetLevel:
+          type: string
+          enum: [AA, AAA]
+        targetRatio:
+          type: number
+          format: double
+          example: 4.5
+        totalCells:
+          type: integer
+          example: 144
+        passingCells:
+          type: integer
+        failingCells:
+          type: integer
+        aaPassCount:
+          type: integer
+        aaaPassCount:
+          type: integer
+        complianceScorePercent:
+          type: number
+          format: double
+          example: 75.0
+        recommendedTokenOverrides:
+          type: object
+          additionalProperties:
+            type: string
+        cells:
+          type: array
+          items:
+            $ref: '#/components/schemas/VariantCellAuditResult'
+        auditedAtUtc:
+          type: string
+          format: date-time

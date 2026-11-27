@@ -324,6 +324,7 @@ export interface SnapGuide {
 
 export type UiMode = 'design' | 'prototype' | 'dev';
 export type ChromeTheme = 'dark' | 'light';
+export type CanvasBackdrop = 'obsidian' | 'daylight';
 export type Locale = 'en' | 'vi';
 export type InspectorTab = 'design' | 'tokens';
 export type LeftRailTab = 'layers' | 'assets';

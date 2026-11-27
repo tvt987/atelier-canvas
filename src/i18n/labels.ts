@@ -53,6 +53,9 @@ export interface StudioLabels {
   grid8pxBtn: string;
   photoGradingSection: string;
   compileTokensBtn: string;
+  variantMatrixBtn: string;
+  daylightCanvasLabel: string;
+  obsidianCanvasLabel: string;
   liveCollabLabel: string;
 }
 
@@ -113,6 +116,9 @@ export const LABELS: Record<Locale, StudioLabels> = {
     grid8pxBtn: '8px Grid',
     photoGradingSection: 'Photo & GPU Grading',
     compileTokensBtn: 'Compile',
+    variantMatrixBtn: 'Variants',
+    daylightCanvasLabel: 'Light Canvas',
+    obsidianCanvasLabel: 'Dark Canvas',
     liveCollabLabel: 'Live Collab',
   },
   vi: {
@@ -171,6 +177,9 @@ export const LABELS: Record<Locale, StudioLabels> = {
     grid8pxBtn: 'Lưới 8px',
     photoGradingSection: 'Ảnh & Bộ lọc GPU',
     compileTokensBtn: 'Biên dịch',
+    variantMatrixBtn: 'Ma trận UI',
+    daylightCanvasLabel: 'Nền Sáng',
+    obsidianCanvasLabel: 'Nền Tối',
     liveCollabLabel: 'Live Collab',
   },
 };

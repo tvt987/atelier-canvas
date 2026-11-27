@@ -39,7 +39,7 @@ public sealed class DocumentConcurrencyApiTests : IClassFixture<WebApplicationFa
         var json = await response.Content.ReadFromJsonAsync<JsonElement>(JsonOpts);
         Assert.Equal("healthy", json.GetProperty("status").GetString());
         Assert.Equal("AtelierCanvas.Api", json.GetProperty("service").GetString());
-        Assert.Equal("5.0.0", json.GetProperty("version").GetString());
+        Assert.Equal("6.0.0", json.GetProperty("version").GetString());
         Assert.Contains(".NET 10", json.GetProperty("runtime").GetString());
     }
 

@@ -39,7 +39,7 @@ app.MapGet("/health", () => Results.Ok(new
 {
     status = "healthy",
     service = "AtelierCanvas.Api",
-    version = "5.0.0",
+    version = "6.0.0",
     runtime = System.Runtime.InteropServices.RuntimeInformation.FrameworkDescription,
     utcNow = DateTimeOffset.UtcNow
 }));
@@ -164,6 +164,46 @@ app.MapPost("/api/v1/tokens/compile", (TokenCompilationRequest request) =>
         return Results.BadRequest(new
         {
             code = "UNSUPPORTED_TARGET",
+            message = ex.Message
+        });
+    }
+});
+
+app.MapPost("/api/v1/design/variant-audit", (VariantAuditRequest request) =>
+{
+    var validation = W3CTokenValidator.ValidateAndNormalize(request.Tokens);
+    if (!validation.IsValid || validation.Normalized is null)
+    {
+        return Results.BadRequest(new
+        {
+            code = "INVALID_DESIGN_TOKENS",
+            message = "W3C Design Token validation failed.",
+            errors = validation.Errors
+        });
+    }
+
+    try
+    {
+        var audit = ComponentVariantAuditor.AuditMatrix(
+            validation.Normalized,
+            request.TargetLevel,
+            request.Primitives,
+            request.CustomCells);
+        return Results.Ok(audit);
+    }
+    catch (ArgumentException ex)
+    {
+        var errorCode = ex.ParamName switch
+        {
+            "targetLevel" => "INVALID_TARGET_LEVEL",
+            "requested" => "UNSUPPORTED_PRIMITIVE",
+            "customCells" => "INVALID_CELL_COLOR",
+            _ => "INVALID_VARIANT_AUDIT_REQUEST"
+        };
+
+        return Results.BadRequest(new
+        {
+            code = errorCode,
             message = ex.Message
         });
     }

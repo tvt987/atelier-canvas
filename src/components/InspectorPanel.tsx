@@ -102,6 +102,7 @@ interface InspectorPanelProps {
   onAlignSelection: (dir: AlignDirection) => void;
   onOpenExportModal: () => void;
   onOpenTokenCompiler: () => void;
+  onOpenVariantMatrix: () => void;
   onOpenPrototypePlayer: () => void;
   onOpenEnterpriseModal: () => void;
   mobileOpen: boolean;
@@ -505,6 +506,7 @@ export function InspectorPanel({
   onAlignSelection,
   onOpenExportModal,
   onOpenTokenCompiler,
+  onOpenVariantMatrix,
   onOpenPrototypePlayer,
   onOpenEnterpriseModal,
   mobileOpen,
@@ -1184,6 +1186,22 @@ export function InspectorPanel({
 
           <button
             type="button"
+            data-testid="btn-dev-variant-matrix"
+            onClick={onOpenVariantMatrix}
+            className="w-full h-9 rounded-lg border text-xs font-semibold flex items-center justify-center gap-2 transition-colors cursor-pointer hover:brightness-110"
+            style={{
+              background:
+                'linear-gradient(135deg, rgba(16,185,129,0.18), rgba(99,102,241,0.16))',
+              borderColor: 'rgba(16,185,129,0.48)',
+              color: '#34D399',
+            }}
+          >
+            <LayoutGrid size={13} strokeWidth={1.6} />
+            <span>Component Variant Matrix (CVA / SwiftUI)</span>
+          </button>
+
+          <button
+            type="button"
             data-testid="btn-dev-token-compiler"
             onClick={onOpenTokenCompiler}
             className="w-full h-9 rounded-lg border text-xs font-semibold flex items-center justify-center gap-2 transition-colors cursor-pointer hover:brightness-110"
@@ -1304,6 +1322,7 @@ export function InspectorPanel({
             doc={doc}
             onUpdateTokens={onUpdateTokens}
             onOpenTokenCompiler={onOpenTokenCompiler}
+            onOpenVariantMatrix={onOpenVariantMatrix}
             labels={labels}
           />
         </Suspense>
