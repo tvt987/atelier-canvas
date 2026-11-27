@@ -120,6 +120,13 @@ export const COMMAND_CATALOG: CommandItem[] = [
     keywords: ['tokyo', 'bauhaus', 'cobalt', 'lime', 'theme'],
   },
   {
+    id: 'open-token-compiler',
+    title: 'Multi-Platform Design Token Compiler (Tailwind v4 / TS / SwiftUI / Kotlin)',
+    subtitle: 'Compile active W3C tokens to Web, React, iOS & Android with WCAG audit',
+    category: 'export',
+    keywords: ['compile', 'token', 'compiler', 'tailwind', 'typescript', 'swiftui', 'kotlin', 'compose', 'ios', 'android'],
+  },
+  {
     id: 'enterprise-license',
     title: 'Enterprise Super VIP Pro License (MBBank VietQR)',
     subtitle: 'Unlock full commercial studio license — 13.900.000 VND',

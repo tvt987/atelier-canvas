@@ -108,6 +108,8 @@ interface CanvasStageProps {
   onDropLocalImage: (file: File, canvasPt: Point, artboardId: string) => void;
   coDesigner: CollaboratorCursor;
   crdtSynced: boolean;
+  activeTabs: number;
+  lastSyncLatencyMs: number | null;
   labels: StudioLabels;
 }
 
@@ -207,6 +209,8 @@ export function CanvasStage({
   onDropLocalImage,
   coDesigner,
   crdtSynced,
+  activeTabs,
+  lastSyncLatencyMs,
   labels,
 }: CanvasStageProps) {
   const stageRef = useRef<HTMLDivElement>(null);
@@ -2603,9 +2607,21 @@ export function CanvasStage({
               : labels.canvasHint}
         </span>
         <span className="hidden md:inline opacity-35">|</span>
-        <span className="flex items-center gap-1.5" style={{ color: 'var(--studio-cyan)' }}>
-          <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
-          {crdtSynced ? labels.yjsSynced : 'Local'}
+        <span
+          data-testid="stage-collab-badge"
+          className="flex items-center gap-1.5"
+          style={{ color: activeTabs >= 2 ? '#34D399' : 'var(--studio-cyan)' }}
+        >
+          <span
+            className={`w-1.5 h-1.5 rounded-full ${
+              activeTabs >= 2 ? 'bg-emerald-400 animate-pulse' : 'bg-emerald-400'
+            }`}
+          />
+          {crdtSynced
+            ? `${labels.liveCollabLabel} · ${activeTabs} ${activeTabs === 1 ? 'Tab' : 'Tabs'}${
+                lastSyncLatencyMs !== null ? ` (${lastSyncLatencyMs}ms)` : ''
+              }`
+            : 'Local'}
         </span>
       </div>
     </div>

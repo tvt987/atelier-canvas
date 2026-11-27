@@ -52,6 +52,8 @@ export interface StudioLabels {
   smartGuidesBtn: string;
   grid8pxBtn: string;
   photoGradingSection: string;
+  compileTokensBtn: string;
+  liveCollabLabel: string;
 }
 
 export const LABELS: Record<Locale, StudioLabels> = {
@@ -110,6 +112,8 @@ export const LABELS: Record<Locale, StudioLabels> = {
     smartGuidesBtn: 'Guides',
     grid8pxBtn: '8px Grid',
     photoGradingSection: 'Photo & GPU Grading',
+    compileTokensBtn: 'Compile',
+    liveCollabLabel: 'Live Collab',
   },
   vi: {
     designMode: 'THIẾT KẾ',
@@ -166,5 +170,7 @@ export const LABELS: Record<Locale, StudioLabels> = {
     smartGuidesBtn: 'Đường gióng',
     grid8pxBtn: 'Lưới 8px',
     photoGradingSection: 'Ảnh & Bộ lọc GPU',
+    compileTokensBtn: 'Biên dịch',
+    liveCollabLabel: 'Live Collab',
   },
 };

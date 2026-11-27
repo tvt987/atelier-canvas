@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type {
   Artboard,
   AutoLayoutConfig,
@@ -32,10 +32,11 @@ import {
   fitArtboardToViewport,
   zoomAtPoint,
 } from './engines/viewport';
+import { computeCoDesignerStep } from './engines/collab';
 import {
-  AtelierCrdtRoom,
-  computeCoDesignerStep,
-} from './engines/collab';
+  CollabSyncEngine,
+  type CollabSyncTelemetry,
+} from './engines/collabSyncEngine';
 import {
   createGeneratedNodesForCommand,
   resolveThemeCommand,
@@ -65,10 +66,24 @@ import { ToolDock } from './components/ToolDock';
 import { LayersPanel } from './components/LayersPanel';
 import { CanvasStage, type ContextMenuAction } from './components/CanvasStage';
 import { InspectorPanel, type AlignDirection } from './components/InspectorPanel';
-import { CommandPalette } from './components/CommandPalette';
-import { ExportModal } from './components/ExportModal';
-import { PrototypePlayerModal } from './components/PrototypePlayerModal';
-import { EnterpriseLicenseModal } from './components/EnterpriseLicenseModal';
+
+const LazyCommandPalette = lazy(() =>
+  import('./components/CommandPalette').then((m) => ({ default: m.CommandPalette })),
+);
+const LazyExportModal = lazy(() =>
+  import('./components/ExportModal').then((m) => ({ default: m.ExportModal })),
+);
+const LazyPrototypePlayerModal = lazy(() =>
+  import('./components/PrototypePlayerModal').then((m) => ({
+    default: m.PrototypePlayerModal,
+  })),
+);
+const LazyEnterpriseLicenseModal = lazy(() =>
+  import('./components/EnterpriseLicenseModal').then((m) => ({
+    default: m.EnterpriseLicenseModal,
+  })),
+);
+const LazyTokenCompilerModal = lazy(() => import('./components/TokenCompilerModal'));
 
 const TOOL_HOTKEYS: Record<string, ToolType> = {
   v: 'select',
@@ -137,12 +152,23 @@ export function App() {
   const [stack3D, setStack3D] = useState(false);
   const [commandOpen, setCommandOpen] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
+  const [tokenCompilerOpen, setTokenCompilerOpen] = useState(false);
   const [playerOpen, setPlayerOpen] = useState(false);
   const [enterpriseOpen, setEnterpriseOpen] = useState(false);
   const [coDesignerActive, setCoDesignerActive] = useState(false);
   const [coDesignerStep, setCoDesignerStep] = useState(0);
-  const [crdtRevisions, setCrdtRevisions] = useState(1);
-  const [crdtSynced, setCrdtSynced] = useState(true);
+  const [collabTelemetry, setCollabTelemetry] = useState<CollabSyncTelemetry>({
+    peerId: 'local',
+    peerLabel: 'Tab LOCAL',
+    channelName: 'atelier_canvas_collab_v5',
+    channelSupported: typeof BroadcastChannel !== 'undefined',
+    activeTabs: 1,
+    peers: [],
+    revision: 1,
+    lamport: 0,
+    lastSyncLatencyMs: null,
+    lastOpKind: null,
+  });
   const [savedLocally, setSavedLocally] = useState(true);
   const [studioNotice, setStudioNotice] = useState<string | null>(null);
 
@@ -150,7 +176,7 @@ export function App() {
   const hasCenteredInitialRef = useRef(false);
   const [viewport, setViewport] = useState<Viewport>({ x: 32, y: 56, zoom: 0.64 });
 
-  const roomRef = useRef<AtelierCrdtRoom | null>(null);
+  const collabRef = useRef<CollabSyncEngine | null>(null);
   const suppressBroadcastRef = useRef(false);
 
   const committedDoc = history.present;
@@ -188,33 +214,54 @@ export function App() {
     return () => window.clearTimeout(timer);
   }, [committedDoc]);
 
-  // Initialize Yjs CRDT multiplayer room
+  // Initialize Real 2-Tab Live Collaborative Vector Sync (BroadcastChannel('atelier_canvas_collab_v5'))
   useEffect(() => {
-    const room = new AtelierCrdtRoom(committedDoc);
-    roomRef.current = room;
-    setCrdtSynced(true);
+    const engine = new CollabSyncEngine(committedDoc);
+    collabRef.current = engine;
+    setCollabTelemetry(engine.getTelemetry());
 
-    room.onRemoteDocument((remoteDoc) => {
+    const offTelemetry = engine.onTelemetryChange((nextTelemetry) => {
+      setCollabTelemetry(nextTelemetry);
+    });
+
+    const offRemote = engine.onRemoteDocument((remoteDoc, meta) => {
       suppressBroadcastRef.current = true;
       setLiveNodesOverride(null);
       setHistory((prev) => pushHistory(prev, remoteDoc));
-      setCrdtRevisions(room.getTelemetry().revisionCount);
-      setTimeout(() => {
+      setActiveArtboardId((curId) => {
+        const boards = getDocumentArtboards(remoteDoc);
+        return boards.some((b) => b.id === curId) ? curId : remoteDoc.artboard.id;
+      });
+      notify(`Live Collab synced (${meta.opKind} · ${meta.latencyMs}ms)`);
+      window.setTimeout(() => {
         suppressBroadcastRef.current = false;
       }, 0);
     });
 
+    const handlePageExit = () => {
+      engine.destroy();
+    };
+    window.addEventListener('pagehide', handlePageExit);
+    window.addEventListener('beforeunload', handlePageExit);
+
     return () => {
-      room.destroy();
-      roomRef.current = null;
+      window.removeEventListener('pagehide', handlePageExit);
+      window.removeEventListener('beforeunload', handlePageExit);
+      offRemote();
+      offTelemetry();
+      engine.destroy();
+      collabRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
-    if (suppressBroadcastRef.current || !roomRef.current) return;
-    roomRef.current.pushLocalDocument(committedDoc);
-    setCrdtRevisions(roomRef.current.getTelemetry().revisionCount);
+    if (!collabRef.current) return;
+    if (suppressBroadcastRef.current) {
+      collabRef.current.syncLocalCacheWithoutBroadcast(committedDoc);
+      return;
+    }
+    collabRef.current.broadcastLocalChange(committedDoc);
   }, [committedDoc]);
 
   useEffect(() => {
@@ -895,6 +942,10 @@ export function App() {
         setPlayerOpen(true);
         return;
       }
+      if (commandId === 'open-token-compiler') {
+        setTokenCompilerOpen(true);
+        return;
+      }
       if (commandId === 'enterprise-license') {
         setEnterpriseOpen(true);
         return;
@@ -1135,12 +1186,15 @@ export function App() {
         onRedo={handleRedo}
         coDesignerActive={coDesignerActive}
         onToggleCoDesigner={() => setCoDesignerActive((v) => !v)}
-        crdtRevisions={crdtRevisions}
+        crdtRevisions={collabTelemetry.revision}
+        activeTabs={collabTelemetry.activeTabs}
+        lastSyncLatencyMs={collabTelemetry.lastSyncLatencyMs}
         chromeTheme={chromeTheme}
         onToggleChromeTheme={toggleChromeTheme}
         locale={locale}
         onToggleLocale={() => setLocale((l) => (l === 'en' ? 'vi' : 'en'))}
         onOpenCommandBar={() => setCommandOpen(true)}
+        onOpenTokenCompiler={() => setTokenCompilerOpen(true)}
         onOpenExportModal={() => setExportOpen(true)}
         labels={labels}
       />
@@ -1206,7 +1260,9 @@ export function App() {
             insertImageFileAt(file, pt, boardId)
           }
           coDesigner={coDesigner}
-          crdtSynced={crdtSynced}
+          crdtSynced={collabTelemetry.channelSupported}
+          activeTabs={collabTelemetry.activeTabs}
+          lastSyncLatencyMs={collabTelemetry.lastSyncLatencyMs}
           labels={labels}
         />
 
@@ -1225,6 +1281,7 @@ export function App() {
           onUpdateTokens={handleUpdateTokens}
           onAlignSelection={handleAlignSelection}
           onOpenExportModal={() => setExportOpen(true)}
+          onOpenTokenCompiler={() => setTokenCompilerOpen(true)}
           onOpenPrototypePlayer={() => setPlayerOpen(true)}
           onOpenEnterpriseModal={() => setEnterpriseOpen(true)}
           mobileOpen={mobileInspectorOpen}
@@ -1247,33 +1304,60 @@ export function App() {
         </div>
       )}
 
-      <CommandPalette
-        open={commandOpen}
-        onClose={() => setCommandOpen(false)}
-        onExecute={handleExecuteCommand}
-        labels={labels}
-      />
+      {commandOpen && (
+        <Suspense fallback={null}>
+          <LazyCommandPalette
+            open={commandOpen}
+            onClose={() => setCommandOpen(false)}
+            onExecute={handleExecuteCommand}
+            labels={labels}
+          />
+        </Suspense>
+      )}
 
-      <ExportModal
-        open={exportOpen}
-        onClose={() => setExportOpen(false)}
-        doc={effectiveDoc}
-        labels={labels}
-      />
+      {exportOpen && (
+        <Suspense fallback={null}>
+          <LazyExportModal
+            open={exportOpen}
+            onClose={() => setExportOpen(false)}
+            doc={effectiveDoc}
+            labels={labels}
+          />
+        </Suspense>
+      )}
 
-      <PrototypePlayerModal
-        open={playerOpen}
-        onClose={() => setPlayerOpen(false)}
-        doc={effectiveDoc}
-        onUpdateTokens={handleUpdateTokens}
-        onSwitchTemplate={handleSelectTemplate}
-      />
+      {tokenCompilerOpen && (
+        <Suspense fallback={null}>
+          <LazyTokenCompilerModal
+            open={tokenCompilerOpen}
+            onClose={() => setTokenCompilerOpen(false)}
+            tokens={effectiveDoc.tokens}
+            onUpdateTokens={handleUpdateTokens}
+          />
+        </Suspense>
+      )}
 
-      <EnterpriseLicenseModal
-        open={enterpriseOpen}
-        onClose={() => setEnterpriseOpen(false)}
-        locale={locale}
-      />
+      {playerOpen && (
+        <Suspense fallback={null}>
+          <LazyPrototypePlayerModal
+            open={playerOpen}
+            onClose={() => setPlayerOpen(false)}
+            doc={effectiveDoc}
+            onUpdateTokens={handleUpdateTokens}
+            onSwitchTemplate={handleSelectTemplate}
+          />
+        </Suspense>
+      )}
+
+      {enterpriseOpen && (
+        <Suspense fallback={null}>
+          <LazyEnterpriseLicenseModal
+            open={enterpriseOpen}
+            onClose={() => setEnterpriseOpen(false)}
+            locale={locale}
+          />
+        </Suspense>
+      )}
     </div>
   );
 }

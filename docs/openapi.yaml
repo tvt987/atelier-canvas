@@ -1,0 +1,378 @@
+openapi: 3.1.0
+info:
+  title: Atelier Canvas v5.0 — Collaborative Document & Design Token Compiler API
+  version: 5.0.0
+  description: >
+    Production .NET 10 Minimal API powering optimistic-concurrency vector canvas snapshots
+    (strict vector-clock versioning with HTTP 409 Conflict detection) and W3C Design Tokens
+    Community Group (DTCG) multi-platform compilation with WCAG 2.1 contrast auditing.
+  contact:
+    name: Truong Van Tinh
+    url: https://github.com/tvt987/atelier-canvas
+servers:
+  - url: http://localhost:5080
+    description: Local .NET 10 API / Docker Compose service
+  - url: http://localhost:8080
+    description: Reverse-proxied via Nginx web gateway
+
+tags:
+  - name: System
+    description: Runtime health and operational readiness probes
+  - name: Documents
+    description: Optimistic-concurrency collaborative canvas document snapshot store
+  - name: Tokens
+    description: W3C DTCG validation, multi-platform code compilation, and WCAG 2.1 auditing
+
+paths:
+  /health:
+    get:
+      tags: [System]
+      summary: Service health probe
+      operationId: getHealth
+      responses:
+        '200':
+          description: Service is healthy and serving requests
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+
+  /api/v1/documents/{docId}:
+    parameters:
+      - name: docId
+        in: path
+        required: true
+        description: Unique collaborative canvas document identifier
+        schema:
+          type: string
+          example: atelier-studio-main
+    get:
+      tags: [Documents]
+      summary: Fetch current canvas document snapshot and version ETag
+      operationId: getDocumentSnapshot
+      responses:
+        '200':
+          description: Current versioned canvas snapshot
+          headers:
+            ETag:
+              description: Quoted monotonic document version vector (e.g. "1")
+              schema:
+                type: string
+                example: '"1"'
+            X-Atelier-Document-Version:
+              description: Numeric document version
+              schema:
+                type: string
+                example: '1'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CanvasDocumentSnapshot'
+        '404':
+          description: Document does not exist
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+    put:
+      tags: [Documents]
+      summary: Persist canvas snapshot with strict optimistic concurrency check
+      description: >
+        Enforces optimistic concurrency via either the HTTP `If-Match` ETag header or the
+        `expectedVersion` request body property. Pass `expectedVersion: 0` to create a brand-new
+        document at version `1`. Stale concurrent overwrites are atomically rejected with
+        `409 Conflict` and the authoritative `currentVersion` / `ETag`.
+      operationId: putDocumentSnapshot
+      parameters:
+        - name: If-Match
+          in: header
+          required: false
+          description: Quoted or raw expected document version (e.g. "1")
+          schema:
+            type: string
+            example: '"1"'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PutDocumentRequest'
+      responses:
+        '200':
+          description: Snapshot committed with incremented monotonic version
+          headers:
+            ETag:
+              description: New quoted version ETag
+              schema:
+                type: string
+                example: '"2"'
+            X-Atelier-Document-Version:
+              schema:
+                type: string
+                example: '2'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CanvasDocumentSnapshot'
+        '400':
+          description: Malformed If-Match header, missing expectedVersion, or missing payload
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '409':
+          description: Concurrent edit detected; expectedVersion does not match currentVersion
+          headers:
+            ETag:
+              description: Authoritative current ETag on the server
+              schema:
+                type: string
+                example: '"2"'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DocumentConflictError'
+
+  /api/v1/tokens/compile:
+    post:
+      tags: [Tokens]
+      summary: Compile W3C DTCG Design Tokens into Web, TypeScript, SwiftUI & Jetpack Compose
+      description: >
+        Validates a W3C Design Tokens JSON document (or flat Atelier token payload), compiles
+        production artifacts for Tailwind v4 `@theme` CSS, TypeScript strict constants, iOS
+        SwiftUI `Color`/`CGFloat` extensions, and Android Jetpack Compose `Theme.kt`, and runs
+        a deterministic WCAG 2.1 relative-luminance contrast audit.
+      operationId: compileDesignTokens
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TokenCompilationRequest'
+      responses:
+        '200':
+          description: Compiled platform artifacts and WCAG 2.1 contrast audit report
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenCompilationResponse'
+        '400':
+          description: Invalid hex colors, invalid dimensions, or unsupported compilation target
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenValidationError'
+
+components:
+  schemas:
+    HealthResponse:
+      type: object
+      required: [status, service, version, runtime, utcNow]
+      properties:
+        status:
+          type: string
+          example: healthy
+        service:
+          type: string
+          example: AtelierCanvas.Api
+        version:
+          type: string
+          example: 5.0.0
+        runtime:
+          type: string
+          example: .NET 10.0.12
+        utcNow:
+          type: string
+          format: date-time
+
+    CanvasDocumentSnapshot:
+      type: object
+      required: [docId, version, templateId, payload, updatedBy, updatedAtUtc, eTag]
+      properties:
+        docId:
+          type: string
+        version:
+          type: integer
+          format: int64
+          minimum: 1
+        templateId:
+          type: string
+        payload:
+          type: object
+          additionalProperties: true
+        updatedBy:
+          type: string
+        updatedAtUtc:
+          type: string
+          format: date-time
+        eTag:
+          type: string
+          example: '"1"'
+
+    PutDocumentRequest:
+      type: object
+      required: [payload]
+      properties:
+        expectedVersion:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Required unless If-Match header is supplied
+        templateId:
+          type: string
+          example: fintech-spatial
+        updatedBy:
+          type: string
+          example: peer-tab-a
+        payload:
+          type: object
+          additionalProperties: true
+
+    DocumentConflictError:
+      type: object
+      required: [code, docId, expectedVersion, currentVersion, currentETag, message]
+      properties:
+        code:
+          type: string
+          enum: [OPTIMISTIC_CONCURRENCY_CONFLICT]
+        docId:
+          type: string
+        expectedVersion:
+          type: integer
+          format: int64
+        currentVersion:
+          type: integer
+          format: int64
+        currentETag:
+          type: string
+          example: '"2"'
+        message:
+          type: string
+
+    TokenCompilationRequest:
+      type: object
+      required: [tokens]
+      properties:
+        tokens:
+          type: object
+          description: W3C DTCG JSON document or flat Atelier semantic token object
+          additionalProperties: true
+        targets:
+          type: array
+          description: Optional subset of targets; defaults to all 4 platforms
+          items:
+            type: string
+            enum: [css, typescript, swiftui, compose]
+
+    CompiledTokenOutput:
+      type: object
+      required: [target, platform, filename, language, mimeType, code, lineCount, byteLength]
+      properties:
+        target:
+          type: string
+          enum: [css, typescript, swiftui, compose]
+        platform:
+          type: string
+        filename:
+          type: string
+        language:
+          type: string
+          enum: [css, typescript, swift, kotlin]
+        mimeType:
+          type: string
+        code:
+          type: string
+        lineCount:
+          type: integer
+        byteLength:
+          type: integer
+
+    WcagPairAudit:
+      type: object
+      required: [id, label, foregroundHex, backgroundHex, ratio, ratioLabel, grade, passesAA, passesAAA]
+      properties:
+        id:
+          type: string
+        label:
+          type: string
+        foregroundHex:
+          type: string
+          example: '#F8FAFC'
+        backgroundHex:
+          type: string
+          example: '#0C0E14'
+        ratio:
+          type: number
+          format: double
+          example: 18.4
+        ratioLabel:
+          type: string
+          example: '18.4:1'
+        grade:
+          type: string
+          enum: [AAA, AA, AA-Large, FAIL]
+        passesAA:
+          type: boolean
+        passesAAA:
+          type: boolean
+
+    WcagAuditReport:
+      type: object
+      required: [pairs, aaPassCount, aaaPassCount, totalPairs, passRatePercent]
+      properties:
+        pairs:
+          type: array
+          items:
+            $ref: '#/components/schemas/WcagPairAudit'
+        aaPassCount:
+          type: integer
+        aaaPassCount:
+          type: integer
+        totalPairs:
+          type: integer
+        passRatePercent:
+          type: integer
+
+    TokenCompilationResponse:
+      type: object
+      required: [themeId, themeName, colorScheme, outputs, wcagReport, compiledAtUtc]
+      properties:
+        themeId:
+          type: string
+        themeName:
+          type: string
+        colorScheme:
+          type: string
+          enum: [dark, light]
+        outputs:
+          type: object
+          additionalProperties:
+            $ref: '#/components/schemas/CompiledTokenOutput'
+        wcagReport:
+          $ref: '#/components/schemas/WcagAuditReport'
+        compiledAtUtc:
+          type: string
+          format: date-time
+
+    ApiError:
+      type: object
+      required: [code, message]
+      properties:
+        code:
+          type: string
+        message:
+          type: string
+
+    TokenValidationError:
+      type: object
+      required: [code, message, errors]
+      properties:
+        code:
+          type: string
+          example: INVALID_DESIGN_TOKENS
+        message:
+          type: string
+        errors:
+          type: array
+          items:
+            type: string

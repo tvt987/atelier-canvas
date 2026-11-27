@@ -16,13 +16,13 @@ export default defineConfig({
       output: {
         manualChunks(id) {
           if (id.includes('node_modules/react') || id.includes('node_modules/react-dom')) {
-            return 'vendor-react';
-          }
-          if (id.includes('node_modules/yjs') || id.includes('node_modules/lib0')) {
-            return 'vendor-yjs';
+            return 'react';
           }
           if (id.includes('node_modules/lucide-react')) {
             return 'vendor-icons';
+          }
+          if (id.includes('/src/engines/') || id.includes('\\src\\engines\\')) {
+            return 'engines';
           }
           return undefined;
         },

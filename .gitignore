@@ -5,3 +5,8 @@ dist
 evidence
 .DS_Store
 Thumbs.db
+bin/
+obj/
+TestResults/
+.vs/
+*.user

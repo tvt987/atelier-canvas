@@ -4,6 +4,7 @@ import {
   ChevronDown,
   Code2,
   Command,
+  Cpu,
   Download,
   FolderOpen,
   History,
@@ -56,11 +57,14 @@ interface TopBarProps {
   coDesignerActive: boolean;
   onToggleCoDesigner: () => void;
   crdtRevisions: number;
+  activeTabs: number;
+  lastSyncLatencyMs: number | null;
   chromeTheme: ChromeTheme;
   onToggleChromeTheme: () => void;
   locale: Locale;
   onToggleLocale: () => void;
   onOpenCommandBar: () => void;
+  onOpenTokenCompiler: () => void;
   onOpenExportModal: () => void;
   labels: StudioLabels;
 }
@@ -93,11 +97,14 @@ export function TopBar({
   coDesignerActive,
   onToggleCoDesigner,
   crdtRevisions,
+  activeTabs,
+  lastSyncLatencyMs,
   chromeTheme,
   onToggleChromeTheme,
   locale,
   onToggleLocale,
   onOpenCommandBar,
+  onOpenTokenCompiler,
   onOpenExportModal,
   labels,
 }: TopBarProps) {
@@ -183,7 +190,7 @@ export function TopBar({
                 backgroundColor: 'rgba(6, 182, 212, 0.1)',
               }}
             >
-              v4.0 PRO
+              v5.0 PRO
             </span>
           </div>
         </div>
@@ -610,8 +617,52 @@ export function TopBar({
         </div>
       </div>
 
-      {/* Right: Enterprise License, Presence, CMD+K, Locale, Theme, Mobile Inspector, Export */}
+      {/* Right: Live Collab Presence, Token Compiler, Enterprise License, Presence, CMD+K, Locale, Theme, Mobile Inspector, Export */}
       <div className="flex items-center gap-1 shrink-0">
+        <div
+          data-testid="live-collab-badge"
+          data-active-tabs={activeTabs}
+          title={`BroadcastChannel(atelier_canvas_collab_v5) · ${crdtRevisions} rev${lastSyncLatencyMs !== null ? ` · ${lastSyncLatencyMs}ms sync` : ''}`}
+          className="hidden xl:flex h-8 px-2.5 rounded-lg border items-center gap-1.5 font-mono-tech text-[10px] font-semibold whitespace-nowrap shrink-0"
+          style={{
+            backgroundColor:
+              activeTabs >= 2
+                ? 'rgba(16, 185, 129, 0.14)'
+                : 'var(--studio-surface-2)',
+            borderColor:
+              activeTabs >= 2
+                ? 'rgba(16, 185, 129, 0.5)'
+                : 'var(--studio-border)',
+            color: activeTabs >= 2 ? '#34D399' : 'var(--studio-cyan)',
+          }}
+        >
+          <span
+            className={`w-1.5 h-1.5 rounded-full shrink-0 ${
+              activeTabs >= 2 ? 'bg-emerald-400 animate-pulse' : 'bg-cyan-400'
+            }`}
+          />
+          <span>
+            {labels.liveCollabLabel} · {activeTabs} {activeTabs === 1 ? 'Tab' : 'Tabs'}
+          </span>
+        </div>
+
+        <button
+          type="button"
+          data-testid="btn-open-token-compiler"
+          onClick={onOpenTokenCompiler}
+          title="Multi-Platform Design Token Compiler (Tailwind v4 / TypeScript / SwiftUI / Jetpack Compose)"
+          className="flex h-8 px-1.5 sm:px-2 rounded-lg border items-center gap-1.5 text-[10px] font-mono-tech font-semibold transition-all cursor-pointer shrink-0 hover:brightness-110"
+          style={{
+            background:
+              'linear-gradient(135deg, rgba(6,182,212,0.16), rgba(99,102,241,0.16))',
+            borderColor: 'rgba(6,182,212,0.45)',
+            color: 'var(--studio-cyan)',
+          }}
+        >
+          <Cpu size={12} strokeWidth={1.8} />
+          <span className="hidden lg:inline">{labels.compileTokensBtn}</span>
+        </button>
+
         <button
           type="button"
           data-testid="btn-enterprise-license"

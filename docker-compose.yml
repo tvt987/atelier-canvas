@@ -1,0 +1,82 @@
+name: atelier-canvas-v5
+
+services:
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: atelier-canvas-web
+    ports:
+      - "8080:80"
+    depends_on:
+      api:
+        condition: service_healthy
+    networks:
+      - atelier-net
+    restart: unless-stopped
+
+  api:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    container_name: atelier-canvas-api
+    environment:
+      ASPNETCORE_ENVIRONMENT: Production
+      ASPNETCORE_URLS: http://+:8080
+      ConnectionStrings__Postgres: "Host=postgres;Port=5432;Database=atelier_canvas;Username=atelier;Password=${POSTGRES_PASSWORD:-atelier_dev_pass}"
+      ConnectionStrings__Redis: "redis:6379,abortConnect=false"
+    ports:
+      - "5080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - atelier-net
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: atelier-canvas-postgres
+    environment:
+      POSTGRES_DB: atelier_canvas
+      POSTGRES_USER: atelier
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-atelier_dev_pass}
+    ports:
+      - "5432:5432"
+    volumes:
+      - atelier-pg-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U atelier -d atelier_canvas"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - atelier-net
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    container_name: atelier-canvas-redis
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory", "128mb", "--maxmemory-policy", "allkeys-lru"]
+    ports:
+      - "6379:6379"
+    volumes:
+      - atelier-redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - atelier-net
+    restart: unless-stopped
+
+networks:
+  atelier-net:
+    driver: bridge
+
+volumes:
+  atelier-pg-data:
+  atelier-redis-data:
