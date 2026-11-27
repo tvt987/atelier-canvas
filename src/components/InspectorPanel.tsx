@@ -14,6 +14,7 @@ import {
   Code2,
   Copy,
   Download,
+  FileCode2,
   LayoutGrid,
   Palette,
   PenTool,
@@ -23,11 +24,15 @@ import {
   Sliders,
   Sparkles,
   Wand2,
+  X,
   Zap,
 } from 'lucide-react';
 import type {
   Artboard,
+  AutoLayoutAlign,
   AutoLayoutConfig,
+  AutoLayoutJustify,
+  AutoLayoutMode,
   BlendMode,
   CanvasNode,
   ClickAction,
@@ -48,16 +53,29 @@ import type {
   UiMode,
 } from '../types/canvas';
 import {
-  BRAND_TOKEN_THEMES,
   COLOR_TOKEN_META,
+  FLAGSHIP_V4_THEMES,
+  LEGACY_V3_THEMES,
 } from '../engines/tokens';
 import {
+  exportCssCustomProperties,
+  exportW3CDesignTokensJson,
+  hydrateDesignTokens,
+  updateTokenSpacingUnit,
+} from '../engines/designTokens';
+import {
+  DEFAULT_AUTO_LAYOUT,
+  generateAutoLayoutCss,
+} from '../engines/autolayout';
+import {
   computeRedlineMeasurements,
+  generateCleanSvg,
   generatePureCss,
   generateReactTailwind,
   generateTokensJson,
   resolveParentArtboard,
 } from '../engines/codegen';
+import { downloadTextFile } from '../engines/exporter';
 import {
   auditNodeContrast,
   autoFixContrastToAAA,
@@ -77,6 +95,7 @@ export type AlignDirection =
 
 interface InspectorPanelProps {
   doc: DocumentState;
+  activeArtboard: Artboard;
   selectedNodes: CanvasNode[];
   uiMode: UiMode;
   activeTab: InspectorTab;
@@ -84,11 +103,15 @@ interface InspectorPanelProps {
   onSelectIds: (ids: string[]) => void;
   onUpdateNode: (id: string, patch: Partial<CanvasNode>) => void;
   onApplyAutoLayout: (frameId: string, config: AutoLayoutConfig) => void;
+  onApplyArtboardAutoLayout: (config: AutoLayoutConfig) => void;
   onUpdateArtboard: (patch: Partial<Artboard>) => void;
   onUpdateTokens: (nextTokens: DesignTokens) => void;
   onAlignSelection: (dir: AlignDirection) => void;
   onOpenExportModal: () => void;
   onOpenPrototypePlayer: () => void;
+  onOpenEnterpriseModal: () => void;
+  mobileOpen: boolean;
+  onCloseMobile: () => void;
   labels: StudioLabels;
 }
 
@@ -139,7 +162,9 @@ const HOVER_OPTIONS: Array<{ value: HoverEffect; label: string }> = [
 
 const CLICK_OPTIONS: Array<{ value: ClickAction; label: string }> = [
   { value: 'none', label: 'None' },
-  { value: 'navigate_artboard', label: 'Navigate to Screen (Artboard)' },
+  { value: 'navigate_artboard', label: 'Navigate To (Artboard)' },
+  { value: 'smart_animate', label: 'Smart Animate (Morph Screen)' },
+  { value: 'modal_overlay', label: 'Modal Overlay (Open Frame)' },
   { value: 'toast', label: 'Show Interactive Toast' },
   { value: 'pulse-target', label: 'Pulse Target Layer' },
   { value: 'switch-template', label: 'Switch Template' },
@@ -198,8 +223,281 @@ function NumberField({
   );
 }
 
+function AutoLayoutInspectorBlock({
+  title,
+  config,
+  onApply,
+  testIdPrefix,
+}: {
+  title: string;
+  config?: AutoLayoutConfig;
+  onApply: (next: AutoLayoutConfig) => void;
+  testIdPrefix: string;
+}) {
+  const cur: AutoLayoutConfig = config ?? DEFAULT_AUTO_LAYOUT;
+  const mode: AutoLayoutMode = cur.layoutMode ?? 'flex';
+  const liveCss = generateAutoLayoutCss(cur);
+
+  return (
+    <section
+      data-testid={`${testIdPrefix}-autolayout-panel`}
+      className="space-y-2 pt-2 border-t"
+      style={{ borderColor: 'var(--studio-border)' }}
+    >
+      <div className="flex items-center justify-between">
+        <span
+          className="font-mono-tech text-[10px] uppercase tracking-wider flex items-center gap-1.5"
+          style={{ color: 'var(--studio-cyan)' }}
+        >
+          <LayoutGrid size={11} />
+          <span>{title}</span>
+        </span>
+        <button
+          type="button"
+          data-testid={`btn-toggle-${testIdPrefix}-autolayout`}
+          onClick={() => onApply({ ...cur, enabled: !cur.enabled })}
+          className="h-5 px-2 rounded font-mono-tech text-[9px] font-semibold cursor-pointer"
+          style={{
+            backgroundColor: cur.enabled ? '#059669' : 'var(--studio-surface-2)',
+            color: cur.enabled ? '#FFFFFF' : 'var(--studio-text-muted)',
+          }}
+        >
+          {cur.enabled ? 'ACTIVE' : 'ENABLE'}
+        </button>
+      </div>
+
+      {/* Mode Switch: Flexbox vs CSS Grid */}
+      <div className="grid grid-cols-2 gap-1">
+        {(
+          [
+            ['flex', 'CSS Flexbox'],
+            ['grid', 'CSS Grid'],
+          ] as const
+        ).map(([m, lbl]) => (
+          <button
+            key={m}
+            type="button"
+            data-testid={`${testIdPrefix}-layout-mode-${m}`}
+            onClick={() => onApply({ ...cur, enabled: true, layoutMode: m })}
+            className="h-6 rounded border font-mono-tech text-[9px] font-semibold uppercase cursor-pointer"
+            style={{
+              backgroundColor:
+                cur.enabled && mode === m
+                  ? 'var(--studio-accent)'
+                  : 'var(--studio-surface-2)',
+              borderColor: 'var(--studio-border)',
+              color:
+                cur.enabled && mode === m
+                  ? '#FFFFFF'
+                  : 'var(--studio-text-secondary)',
+            }}
+          >
+            {lbl}
+          </button>
+        ))}
+      </div>
+
+      {/* Direction (Flex) or Columns (Grid) */}
+      {mode === 'flex' ? (
+        <div className="grid grid-cols-2 gap-1.5">
+          {(['row', 'column'] as const).map((dir) => (
+            <button
+              key={dir}
+              type="button"
+              onClick={() =>
+                onApply({ ...cur, enabled: true, layoutMode: 'flex', direction: dir })
+              }
+              className="h-6 rounded border font-mono-tech text-[10px] uppercase cursor-pointer"
+              style={{
+                backgroundColor:
+                  cur.direction === dir
+                    ? 'rgba(6, 182, 212, 0.2)'
+                    : 'var(--studio-surface-2)',
+                borderColor:
+                  cur.direction === dir
+                    ? 'rgba(6, 182, 212, 0.5)'
+                    : 'var(--studio-border)',
+                color:
+                  cur.direction === dir
+                    ? 'var(--studio-cyan)'
+                    : 'var(--studio-text-secondary)',
+              }}
+            >
+              {dir}
+            </button>
+          ))}
+        </div>
+      ) : (
+        <div className="grid grid-cols-3 gap-1">
+          {([2, 3, 4] as const).map((cols) => (
+            <button
+              key={cols}
+              type="button"
+              onClick={() =>
+                onApply({ ...cur, enabled: true, layoutMode: 'grid', columns: cols })
+              }
+              className="h-6 rounded border font-mono-tech text-[10px] cursor-pointer"
+              style={{
+                backgroundColor:
+                  (cur.columns ?? 2) === cols
+                    ? 'rgba(6, 182, 212, 0.2)'
+                    : 'var(--studio-surface-2)',
+                borderColor:
+                  (cur.columns ?? 2) === cols
+                    ? 'rgba(6, 182, 212, 0.5)'
+                    : 'var(--studio-border)',
+                color:
+                  (cur.columns ?? 2) === cols
+                    ? 'var(--studio-cyan)'
+                    : 'var(--studio-text-secondary)',
+              }}
+            >
+              {cols} Cols
+            </button>
+          ))}
+        </div>
+      )}
+
+      {/* Gap & Padding Controls */}
+      <div className="grid grid-cols-2 gap-1.5">
+        <NumberField
+          label="GAP"
+          testId={`${testIdPrefix}-autolayout-gap`}
+          value={cur.gap}
+          min={0}
+          max={96}
+          onChange={(gap) => onApply({ ...cur, enabled: true, gap: Math.max(0, gap) })}
+        />
+        <NumberField
+          label="PAD"
+          testId={`${testIdPrefix}-autolayout-pad`}
+          value={cur.padding}
+          min={0}
+          max={96}
+          onChange={(padding) =>
+            onApply({ ...cur, enabled: true, padding: Math.max(0, padding) })
+          }
+        />
+      </div>
+
+      {/* Quick 8px Spacing Chips */}
+      <div className="grid grid-cols-4 gap-1">
+        {([8, 16, 24, 32] as const).map((px) => (
+          <button
+            key={px}
+            type="button"
+            onClick={() => onApply({ ...cur, enabled: true, gap: px })}
+            className="h-5 rounded border font-mono-tech text-[9px] cursor-pointer hover:bg-white/5"
+            style={{
+              backgroundColor:
+                cur.gap === px ? 'var(--studio-accent-soft)' : 'var(--studio-surface-2)',
+              borderColor:
+                cur.gap === px ? 'var(--studio-accent)' : 'var(--studio-border)',
+              color:
+                cur.gap === px ? 'var(--studio-accent)' : 'var(--studio-text-muted)',
+            }}
+          >
+            {px}px
+          </button>
+        ))}
+      </div>
+
+      {/* Align & Justify Selectors */}
+      <div className="grid grid-cols-2 gap-1.5">
+        <select
+          aria-label="Align items"
+          value={cur.align}
+          onChange={(e) =>
+            onApply({
+              ...cur,
+              enabled: true,
+              align: e.target.value as AutoLayoutAlign,
+            })
+          }
+          className="h-7 px-1.5 rounded-md border font-mono-tech text-[10px] outline-none"
+          style={{
+            backgroundColor: 'var(--studio-surface-2)',
+            borderColor: 'var(--studio-border)',
+            color: 'var(--studio-text)',
+          }}
+        >
+          <option value="start" className="bg-slate-900 text-white">
+            Align: Start
+          </option>
+          <option value="center" className="bg-slate-900 text-white">
+            Align: Center
+          </option>
+          <option value="end" className="bg-slate-900 text-white">
+            Align: End
+          </option>
+          <option value="stretch" className="bg-slate-900 text-white">
+            Align: Stretch
+          </option>
+        </select>
+
+        {mode === 'flex' ? (
+          <select
+            aria-label="Justify content"
+            value={cur.justify ?? 'start'}
+            onChange={(e) =>
+              onApply({
+                ...cur,
+                enabled: true,
+                justify: e.target.value as AutoLayoutJustify,
+              })
+            }
+            className="h-7 px-1.5 rounded-md border font-mono-tech text-[10px] outline-none"
+            style={{
+              backgroundColor: 'var(--studio-surface-2)',
+              borderColor: 'var(--studio-border)',
+              color: 'var(--studio-text)',
+            }}
+          >
+            <option value="start" className="bg-slate-900 text-white">
+              Justify: Start
+            </option>
+            <option value="center" className="bg-slate-900 text-white">
+              Justify: Center
+            </option>
+            <option value="end" className="bg-slate-900 text-white">
+              Justify: End
+            </option>
+            <option value="between" className="bg-slate-900 text-white">
+              Justify: Between
+            </option>
+          </select>
+        ) : (
+          <div
+            className="h-7 px-2 rounded-md border flex items-center justify-center font-mono-tech text-[10px]"
+            style={{
+              backgroundColor: 'var(--studio-surface-2)',
+              borderColor: 'var(--studio-border)',
+              color: 'var(--studio-cyan)',
+            }}
+          >
+            {cur.columns ?? 2}fr Auto
+          </div>
+        )}
+      </div>
+
+      {/* Live CSS Flexbox / Grid Readout */}
+      <pre
+        data-testid={`${testIdPrefix}-autolayout-css`}
+        className="p-2 rounded-md border font-mono-tech text-[9.5px] leading-relaxed text-cyan-200/90 overflow-x-auto select-text"
+        style={{
+          backgroundColor: '#0B0D12',
+          borderColor: 'var(--studio-border)',
+        }}
+      >
+        <code>{liveCss}</code>
+      </pre>
+    </section>
+  );
+}
+
 export function InspectorPanel({
   doc,
+  activeArtboard,
   selectedNodes,
   uiMode,
   activeTab,
@@ -207,23 +505,61 @@ export function InspectorPanel({
   onSelectIds,
   onUpdateNode,
   onApplyAutoLayout,
+  onApplyArtboardAutoLayout,
   onUpdateArtboard,
   onUpdateTokens,
   onAlignSelection,
   onOpenExportModal,
   onOpenPrototypePlayer,
+  onOpenEnterpriseModal,
+  mobileOpen,
+  onCloseMobile,
   labels,
 }: InspectorPanelProps) {
   const [codeFormat, setCodeFormat] = useState<CodeFormat>('react-tailwind');
   const [copied, setCopied] = useState(false);
+  const [tokenExportNotice, setTokenExportNotice] = useState<string | null>(null);
+  const [showLegacyThemes, setShowLegacyThemes] = useState(false);
 
   const primary = selectedNodes.length === 1 ? selectedNodes[0] : null;
+  const tokenSystem = useMemo(() => hydrateDesignTokens(doc.tokens), [doc.tokens]);
 
   const generatedCode = useMemo(() => {
     if (codeFormat === 'css') return generatePureCss(doc, primary);
+    if (codeFormat === 'svg') return generateCleanSvg(doc, primary);
     if (codeFormat === 'tokens-json') return generateTokensJson(doc.tokens);
     return generateReactTailwind(doc, primary);
   }, [doc, primary, codeFormat]);
+
+  const codeFilename =
+    codeFormat === 'react-tailwind'
+      ? 'AtelierComponent.tsx'
+      : codeFormat === 'css'
+        ? 'atelier-tokens.css'
+        : codeFormat === 'svg'
+          ? 'atelier-vector.svg'
+          : `${doc.tokens.id}-tokens.json`;
+
+  const railPositionClass = mobileOpen
+    ? 'flex fixed inset-y-12 right-0 w-[300px] max-w-[calc(100vw-48px)] shadow-2xl z-40'
+    : 'hidden md:flex w-72 lg:w-[300px] shrink-0 z-20';
+
+  const handleDownloadCode = () => {
+    const mime =
+      codeFormat === 'svg'
+        ? 'image/svg+xml;charset=utf-8'
+        : codeFormat === 'tokens-json'
+          ? 'application/json;charset=utf-8'
+          : codeFormat === 'css'
+            ? 'text/css;charset=utf-8'
+            : 'text/plain;charset=utf-8';
+    downloadTextFile(generatedCode, codeFilename, mime);
+  };
+
+  const flashTokenNotice = (msg: string) => {
+    setTokenExportNotice(msg);
+    window.setTimeout(() => setTokenExportNotice(null), 1800);
+  };
 
   const redlines = useMemo(
     () =>
@@ -282,7 +618,7 @@ export function InspectorPanel({
     return (
       <aside
         data-testid="prototype-inspector"
-        className="w-72 lg:w-[300px] shrink-0 border-l flex flex-col select-none z-20"
+        className={`${railPositionClass} border-l flex-col select-none`}
         style={{
           backgroundColor: 'var(--studio-surface)',
           borderColor: 'var(--studio-border)',
@@ -298,9 +634,20 @@ export function InspectorPanel({
               {labels.prototypeInspector}
             </span>
           </div>
-          <span className="font-mono-tech text-[10px] text-emerald-400">
-            {activeFlows.length} flows
-          </span>
+          <div className="flex items-center gap-1.5">
+            <span className="font-mono-tech text-[10px] text-emerald-400">
+              {activeFlows.length} flows
+            </span>
+            {mobileOpen && (
+              <button
+                type="button"
+                onClick={onCloseMobile}
+                className="md:hidden w-6 h-6 rounded flex items-center justify-center hover:bg-white/10"
+              >
+                <X size={13} />
+              </button>
+            )}
+          </div>
         </div>
 
         <div className="flex-1 overflow-y-auto studio-scroll p-3 space-y-3.5">
@@ -448,7 +795,9 @@ export function InspectorPanel({
                   ))}
                 </select>
 
-                {proto.clickAction === 'navigate_artboard' && (
+                {(proto.clickAction === 'navigate_artboard' ||
+                  proto.clickAction === 'smart_animate' ||
+                  proto.clickAction === 'modal_overlay') && (
                   <div className="space-y-1.5">
                     <select
                       data-testid="proto-target-artboard-select"
@@ -473,7 +822,13 @@ export function InspectorPanel({
                       ))}
                     </select>
                     <select
-                      value={proto.transition ?? 'slide-left'}
+                      value={
+                        proto.clickAction === 'modal_overlay'
+                          ? 'modal-overlay'
+                          : proto.clickAction === 'smart_animate'
+                            ? 'smart-animate'
+                            : (proto.transition ?? 'smart-animate')
+                      }
                       onChange={(e) =>
                         updateProto({
                           transition: e.target.value as ScreenTransition,
@@ -486,6 +841,9 @@ export function InspectorPanel({
                         color: 'var(--studio-cyan)',
                       }}
                     >
+                      <option value="smart-animate" className="bg-slate-900 text-white">
+                        Transition: Smart Animate
+                      </option>
                       <option value="slide-left" className="bg-slate-900 text-white">
                         Transition: Slide Left
                       </option>
@@ -494,6 +852,9 @@ export function InspectorPanel({
                       </option>
                       <option value="spring-scale" className="bg-slate-900 text-white">
                         Transition: Spring Scale
+                      </option>
+                      <option value="modal-overlay" className="bg-slate-900 text-white">
+                        Transition: Modal Overlay
                       </option>
                     </select>
                   </div>
@@ -615,7 +976,7 @@ export function InspectorPanel({
             }}
           >
             <Play size={13} fill="currentColor" />
-            <span>Launch Fullscreen Prototype</span>
+            <span>{labels.presentBtn}</span>
           </button>
         </div>
       </aside>
@@ -627,7 +988,7 @@ export function InspectorPanel({
     return (
       <aside
         data-testid="dev-inspector"
-        className="w-80 shrink-0 border-l flex flex-col select-none z-20"
+        className={`${railPositionClass} border-l flex-col select-none`}
         style={{
           backgroundColor: 'var(--studio-surface)',
           borderColor: 'var(--studio-border)',
@@ -643,15 +1004,26 @@ export function InspectorPanel({
               {labels.codeInspector}
             </span>
           </div>
-          <span
-            className="font-mono-tech text-[10px] px-1.5 py-0.5 rounded truncate max-w-[140px]"
-            style={{
-              backgroundColor: 'rgba(6, 182, 212, 0.14)',
-              color: 'var(--studio-cyan)',
-            }}
-          >
-            {primary ? primary.name : doc.artboard.name}
-          </span>
+          <div className="flex items-center gap-1.5">
+            <span
+              className="font-mono-tech text-[10px] px-1.5 py-0.5 rounded truncate max-w-[120px]"
+              style={{
+                backgroundColor: 'rgba(6, 182, 212, 0.14)',
+                color: 'var(--studio-cyan)',
+              }}
+            >
+              {primary ? primary.name : doc.artboard.name}
+            </span>
+            {mobileOpen && (
+              <button
+                type="button"
+                onClick={onCloseMobile}
+                className="md:hidden w-6 h-6 rounded flex items-center justify-center hover:bg-white/10"
+              >
+                <X size={13} />
+              </button>
+            )}
+          </div>
         </div>
 
         <div className="flex-1 overflow-y-auto studio-scroll p-3 space-y-3">
@@ -748,9 +1120,9 @@ export function InspectorPanel({
             </div>
           )}
 
-          {/* Code Format Switch */}
+          {/* Code Format Switch: React+TW4 | CSS Vars | Clean SVG | W3C JSON */}
           <div
-            className="grid grid-cols-3 p-0.5 rounded-lg border gap-0.5"
+            className="grid grid-cols-4 p-0.5 rounded-lg border gap-0.5"
             style={{
               backgroundColor: 'var(--studio-surface-2)',
               borderColor: 'var(--studio-border)',
@@ -758,9 +1130,10 @@ export function InspectorPanel({
           >
             {(
               [
-                ['react-tailwind', 'React + TW4'],
-                ['css', 'Pure CSS'],
-                ['tokens-json', 'Tokens JSON'],
+                ['react-tailwind', 'React'],
+                ['css', 'CSS Vars'],
+                ['svg', 'SVG'],
+                ['tokens-json', 'Tokens'],
               ] as const
             ).map(([fmt, lbl]) => (
               <button
@@ -768,7 +1141,7 @@ export function InspectorPanel({
                 type="button"
                 data-testid={`code-tab-${fmt}`}
                 onClick={() => setCodeFormat(fmt)}
-                className="h-7 rounded-md font-mono-tech text-[10px] font-semibold transition-colors cursor-pointer"
+                className="h-7 rounded-md font-mono-tech text-[9.5px] font-semibold transition-colors cursor-pointer"
                 style={{
                   backgroundColor: codeFormat === fmt ? '#0891B2' : 'transparent',
                   color:
@@ -780,7 +1153,7 @@ export function InspectorPanel({
             ))}
           </div>
 
-          {/* Code Output Surface */}
+          {/* Code Output Surface with 1-Click Copy & Download */}
           <div
             className="rounded-lg border overflow-hidden"
             style={{
@@ -788,27 +1161,35 @@ export function InspectorPanel({
               borderColor: 'var(--studio-border-strong)',
             }}
           >
-            <div className="h-8 px-2.5 border-b border-white/10 flex items-center justify-between">
-              <span className="font-mono-tech text-[10px] text-slate-400">
-                {codeFormat === 'react-tailwind'
-                  ? 'Component.tsx'
-                  : codeFormat === 'css'
-                    ? 'styles.css'
-                    : 'design-tokens.json'}
+            <div className="h-8 px-2.5 border-b border-white/10 flex items-center justify-between gap-1.5">
+              <span className="font-mono-tech text-[10px] text-slate-400 truncate">
+                {codeFilename}
               </span>
-              <button
-                type="button"
-                data-testid="btn-copy-code"
-                onClick={handleCopyCode}
-                className="h-6 px-2 rounded text-[10px] font-mono-tech font-medium flex items-center gap-1 bg-white/10 hover:bg-white/15 text-slate-200 cursor-pointer"
-              >
-                {copied ? <Check size={11} /> : <Copy size={11} />}
-                <span>{copied ? labels.copied : labels.copyCode}</span>
-              </button>
+              <div className="flex items-center gap-1 shrink-0">
+                <button
+                  type="button"
+                  data-testid="btn-copy-code"
+                  onClick={handleCopyCode}
+                  className="h-6 px-2 rounded text-[10px] font-mono-tech font-medium flex items-center gap-1 bg-white/10 hover:bg-white/15 text-slate-200 cursor-pointer"
+                >
+                  {copied ? <Check size={11} /> : <Copy size={11} />}
+                  <span>{copied ? labels.copied : labels.copyCode}</span>
+                </button>
+                <button
+                  type="button"
+                  data-testid="btn-download-code"
+                  onClick={handleDownloadCode}
+                  title={`Download ${codeFilename}`}
+                  className="h-6 px-2 rounded text-[10px] font-mono-tech font-medium flex items-center gap-1 bg-cyan-500/20 hover:bg-cyan-500/30 border border-cyan-500/40 text-cyan-200 cursor-pointer"
+                >
+                  <Download size={10} />
+                  <span>{labels.downloadCode}</span>
+                </button>
+              </div>
             </div>
             <pre
               data-testid="dev-code-output"
-              className="p-3 text-[11px] leading-relaxed font-mono-tech text-cyan-100 whitespace-pre-wrap break-words max-h-[380px] overflow-y-auto studio-scroll select-text"
+              className="p-3 text-[11px] leading-relaxed font-mono-tech text-cyan-100 whitespace-pre-wrap break-words max-h-[360px] overflow-y-auto studio-scroll select-text"
             >
               <code>{generatedCode}</code>
             </pre>
@@ -817,15 +1198,30 @@ export function InspectorPanel({
           <button
             type="button"
             onClick={onOpenExportModal}
-            className="w-full h-9 rounded-lg border text-xs font-semibold flex items-center justify-center gap-2 transition-colors cursor-pointer"
+            className="w-full h-9 rounded-lg border text-xs font-semibold flex items-center justify-center gap-2 transition-colors cursor-pointer hover:bg-white/5"
             style={{
               backgroundColor: 'var(--studio-surface-2)',
               borderColor: 'var(--studio-border-strong)',
               color: 'var(--studio-text)',
             }}
           >
-            <Download size={13} strokeWidth={1.6} />
+            <FileCode2 size={13} strokeWidth={1.6} />
             <span>Open Export Studio (SVG / 3x PNG / HTML)</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={onOpenEnterpriseModal}
+            className="w-full h-8 rounded-lg border text-[11px] font-mono-tech font-semibold flex items-center justify-center gap-1.5 cursor-pointer"
+            style={{
+              background:
+                'linear-gradient(135deg, rgba(245,158,11,0.14), rgba(99,102,241,0.14))',
+              borderColor: 'rgba(245,158,11,0.4)',
+              color: '#FBBF24',
+            }}
+          >
+            <ShieldCheck size={12} />
+            <span>Enterprise Source License · 13.9M VND</span>
           </button>
         </div>
       </aside>
@@ -836,63 +1232,84 @@ export function InspectorPanel({
   return (
     <aside
       data-testid="design-inspector"
-      className="w-72 lg:w-[300px] shrink-0 border-l flex flex-col select-none z-20"
+      className={`${railPositionClass} border-l flex-col select-none`}
       style={{
         backgroundColor: 'var(--studio-surface)',
         borderColor: 'var(--studio-border)',
       }}
     >
       <div
-        className="h-9 px-2 border-b grid grid-cols-2 gap-1 items-center"
+        className="h-9 px-2 border-b flex items-center gap-1"
         style={{ borderColor: 'var(--studio-border)' }}
       >
-        <button
-          type="button"
-          data-testid="tab-design"
-          onClick={() => onSetActiveTab('design')}
-          className="h-7 rounded-md text-[11px] font-semibold flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
-          style={{
-            backgroundColor:
-              activeTab === 'design' ? 'var(--studio-accent-soft)' : 'transparent',
-            color:
-              activeTab === 'design'
-                ? 'var(--studio-accent)'
-                : 'var(--studio-text-secondary)',
-          }}
-        >
-          <Sliders size={12} strokeWidth={1.6} />
-          <span>{labels.designTab}</span>
-        </button>
-        <button
-          type="button"
-          data-testid="tab-tokens"
-          onClick={() => onSetActiveTab('tokens')}
-          className="h-7 rounded-md text-[11px] font-semibold flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
-          style={{
-            backgroundColor:
-              activeTab === 'tokens' ? 'var(--studio-accent-soft)' : 'transparent',
-            color:
-              activeTab === 'tokens'
-                ? 'var(--studio-accent)'
-                : 'var(--studio-text-secondary)',
-          }}
-        >
-          <Palette size={12} strokeWidth={1.6} />
-          <span>{labels.tokensTab}</span>
-        </button>
+        <div className="flex-1 grid grid-cols-2 gap-1 items-center">
+          <button
+            type="button"
+            data-testid="tab-design"
+            onClick={() => onSetActiveTab('design')}
+            className="h-7 rounded-md text-[11px] font-semibold flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+            style={{
+              backgroundColor:
+                activeTab === 'design' ? 'var(--studio-accent-soft)' : 'transparent',
+              color:
+                activeTab === 'design'
+                  ? 'var(--studio-accent)'
+                  : 'var(--studio-text-secondary)',
+            }}
+          >
+            <Sliders size={12} strokeWidth={1.6} />
+            <span>{labels.designTab}</span>
+          </button>
+          <button
+            type="button"
+            data-testid="tab-tokens"
+            onClick={() => onSetActiveTab('tokens')}
+            className="h-7 rounded-md text-[11px] font-semibold flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+            style={{
+              backgroundColor:
+                activeTab === 'tokens' ? 'var(--studio-accent-soft)' : 'transparent',
+              color:
+                activeTab === 'tokens'
+                  ? 'var(--studio-accent)'
+                  : 'var(--studio-text-secondary)',
+            }}
+          >
+            <Palette size={12} strokeWidth={1.6} />
+            <span>{labels.tokensTab}</span>
+          </button>
+        </div>
+        {mobileOpen && (
+          <button
+            type="button"
+            onClick={onCloseMobile}
+            className="md:hidden w-6 h-6 rounded flex items-center justify-center hover:bg-white/10"
+          >
+            <X size={13} />
+          </button>
+        )}
       </div>
 
       {activeTab === 'tokens' ? (
-        <div className="flex-1 overflow-y-auto studio-scroll p-3 space-y-4">
+        <div
+          data-testid="design-tokens-studio"
+          className="flex-1 overflow-y-auto studio-scroll p-3 space-y-4"
+        >
+          {/* 1. Instant Theme Switcher (Obsidian Pro, Swiss Editorial Light, Cyber Emerald) */}
           <section className="space-y-2">
-            <div
-              className="text-[10px] font-mono-tech uppercase tracking-wider font-semibold"
-              style={{ color: 'var(--studio-text-muted)' }}
-            >
-              {labels.brandThemesTitle}
+            <div className="flex items-center justify-between">
+              <span
+                className="text-[10px] font-mono-tech uppercase tracking-wider font-semibold"
+                style={{ color: 'var(--studio-text-muted)' }}
+              >
+                {labels.brandThemesTitle}
+              </span>
+              <span className="font-mono-tech text-[9px]" style={{ color: 'var(--studio-cyan)' }}>
+                W3C DTCG v4
+              </span>
             </div>
+
             <div className="space-y-1.5">
-              {BRAND_TOKEN_THEMES.map((theme) => {
+              {FLAGSHIP_V4_THEMES.map((theme) => {
                 const isActive = doc.tokens.id === theme.id;
                 return (
                   <button
@@ -921,7 +1338,7 @@ export function InspectorPanel({
                         ].map((hex, idx) => (
                           <span
                             key={idx}
-                            className="w-3 h-3 rounded-full border border-white/20"
+                            className="w-3 h-3 rounded-full border border-white/25"
                             style={{ backgroundColor: hex }}
                           />
                         ))}
@@ -937,9 +1354,99 @@ export function InspectorPanel({
                 );
               })}
             </div>
+
+            <button
+              type="button"
+              onClick={() => setShowLegacyThemes((v) => !v)}
+              className="w-full h-6 rounded border font-mono-tech text-[9.5px] cursor-pointer hover:bg-white/5"
+              style={{
+                borderColor: 'var(--studio-border)',
+                color: 'var(--studio-text-muted)',
+              }}
+            >
+              {showLegacyThemes ? 'Hide Studio Classic Presets' : '+3 Studio Classic Presets'}
+            </button>
+
+            {showLegacyThemes && (
+              <div className="space-y-1">
+                {LEGACY_V3_THEMES.filter((t) => t.id !== 'obsidian-electric').map(
+                  (theme) => {
+                    const isActive = doc.tokens.id === theme.id;
+                    return (
+                      <button
+                        key={theme.id}
+                        type="button"
+                        data-testid={`theme-morph-${theme.id}`}
+                        onClick={() => onUpdateTokens(theme)}
+                        className="w-full px-2.5 py-1.5 rounded-lg border text-left flex items-center justify-between cursor-pointer"
+                        style={{
+                          backgroundColor: isActive
+                            ? 'var(--studio-accent-soft)'
+                            : 'var(--studio-surface-2)',
+                          borderColor: isActive
+                            ? 'var(--studio-accent)'
+                            : 'var(--studio-border)',
+                        }}
+                      >
+                        <span className="text-[11px] font-medium">{theme.name}</span>
+                        <div className="flex items-center gap-1">
+                          <span
+                            className="w-2.5 h-2.5 rounded-full"
+                            style={{ backgroundColor: theme.brandPrimary }}
+                          />
+                          <span
+                            className="w-2.5 h-2.5 rounded-full"
+                            style={{ backgroundColor: theme.brandAccent }}
+                          />
+                        </div>
+                      </button>
+                    );
+                  },
+                )}
+              </div>
+            )}
           </section>
 
+          {/* 2. Color Primitives Ramp */}
           <section className="space-y-2 pt-2 border-t" style={{ borderColor: 'var(--studio-border)' }}>
+            <div
+              className="text-[10px] font-mono-tech uppercase tracking-wider font-semibold"
+              style={{ color: 'var(--studio-text-muted)' }}
+            >
+              {labels.tokenPrimitivesTitle}
+            </div>
+            <div className="grid grid-cols-6 gap-1">
+              {(
+                [
+                  ['brand500', tokenSystem.primitives.brand500],
+                  ['accent500', tokenSystem.primitives.accent500],
+                  ['success500', tokenSystem.primitives.success500],
+                  ['warning500', tokenSystem.primitives.warning500],
+                  ['danger500', tokenSystem.primitives.danger500],
+                  ['neutral900', tokenSystem.primitives.neutral900],
+                ] as const
+              ).map(([key, hex]) => (
+                <button
+                  key={key}
+                  type="button"
+                  title={`${key}: ${hex}`}
+                  onClick={() => {
+                    try {
+                      void navigator.clipboard.writeText(hex);
+                    } catch {
+                      // ignore
+                    }
+                    flashTokenNotice(`Copied ${hex}`);
+                  }}
+                  className="h-7 rounded-md border border-white/15 cursor-pointer transition-transform hover:scale-105"
+                  style={{ backgroundColor: hex }}
+                />
+              ))}
+            </div>
+          </section>
+
+          {/* 3. Semantic Color Variables */}
+          <section className="space-y-1.5 pt-2 border-t" style={{ borderColor: 'var(--studio-border)' }}>
             <div
               className="text-[10px] font-mono-tech uppercase tracking-wider font-semibold"
               style={{ color: 'var(--studio-text-muted)' }}
@@ -952,7 +1459,7 @@ export function InspectorPanel({
                 return (
                   <div
                     key={meta.key}
-                    className="h-8 px-2 rounded-md border flex items-center justify-between gap-2"
+                    className="h-7 px-2 rounded-md border flex items-center justify-between gap-2"
                     style={{
                       backgroundColor: 'var(--studio-surface-2)',
                       borderColor: 'var(--studio-border)',
@@ -976,38 +1483,262 @@ export function InspectorPanel({
                             [meta.key]: e.target.value,
                           })
                         }
-                        className="w-5 h-5 rounded cursor-pointer border-0 bg-transparent p-0"
+                        className="w-4 h-4 rounded cursor-pointer border-0 bg-transparent p-0"
                       />
                     </div>
                   </div>
                 );
               })}
+            </div>
+          </section>
 
-              <div
-                className="p-2 rounded-md border space-y-1.5"
+          {/* 4. Typography Scale */}
+          <section className="space-y-2 pt-2 border-t" style={{ borderColor: 'var(--studio-border)' }}>
+            <div className="flex items-center justify-between">
+              <span
+                className="text-[10px] font-mono-tech uppercase tracking-wider font-semibold"
+                style={{ color: 'var(--studio-text-muted)' }}
+              >
+                {labels.tokenTypographyTitle}
+              </span>
+              <select
+                aria-label="Display font token"
+                value={doc.tokens.fontDisplay ?? tokenSystem.typographyScale.display.fontFamily}
+                onChange={(e) =>
+                  onUpdateTokens({
+                    ...doc.tokens,
+                    fontDisplay: e.target.value,
+                    typographyScale: undefined,
+                  })
+                }
+                className="h-5 px-1.5 rounded border font-mono-tech text-[9px] outline-none"
                 style={{
                   backgroundColor: 'var(--studio-surface-2)',
                   borderColor: 'var(--studio-border)',
+                  color: 'var(--studio-cyan)',
                 }}
               >
-                <div className="flex items-center justify-between font-mono-tech text-[10px]">
-                  <span>--radius-base</span>
-                  <span style={{ color: 'var(--studio-cyan)' }}>{doc.tokens.radiusBase}px</span>
-                </div>
-                <input
-                  type="range"
-                  min={0}
-                  max={32}
-                  value={doc.tokens.radiusBase}
-                  onChange={(e) =>
-                    onUpdateTokens({
-                      ...doc.tokens,
-                      radiusBase: Number(e.target.value),
-                    })
-                  }
-                  className="w-full studio-range"
-                />
+                {['Space Grotesk', 'Cormorant Garamond', 'Inter'].map((f) => (
+                  <option key={f} value={f} className="bg-slate-900 text-white">
+                    {f}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="space-y-1">
+              {(['display', 'h1', 'h2', 'body', 'mono'] as const).map((k) => {
+                const spec = tokenSystem.typographyScale[k];
+                return (
+                  <div
+                    key={k}
+                    className="px-2 py-1 rounded-md border flex items-center justify-between"
+                    style={{
+                      backgroundColor: 'var(--studio-surface-2)',
+                      borderColor: 'var(--studio-border)',
+                    }}
+                  >
+                    <span
+                      className="text-[11px] truncate"
+                      style={{
+                        fontFamily: spec.fontFamily,
+                        fontWeight: spec.fontWeight,
+                      }}
+                    >
+                      {k.toUpperCase()} · {spec.fontFamily}
+                    </span>
+                    <span
+                      className="font-mono-tech text-[9.5px] shrink-0"
+                      style={{ color: 'var(--studio-cyan)' }}
+                    >
+                      {spec.fontSize}px / {spec.fontWeight}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          </section>
+
+          {/* 5. Spacing Grid (4px / 8px Base Unit) */}
+          <section className="space-y-2 pt-2 border-t" style={{ borderColor: 'var(--studio-border)' }}>
+            <div className="flex items-center justify-between">
+              <span
+                className="text-[10px] font-mono-tech uppercase tracking-wider font-semibold"
+                style={{ color: 'var(--studio-text-muted)' }}
+              >
+                {labels.tokenSpacingTitle}
+              </span>
+              <div className="flex gap-1">
+                {([4, 8] as const).map((unit) => (
+                  <button
+                    key={unit}
+                    type="button"
+                    data-testid={`token-spacing-unit-${unit}`}
+                    onClick={() => onUpdateTokens(updateTokenSpacingUnit(doc.tokens, unit))}
+                    className="h-5 px-1.5 rounded font-mono-tech text-[9px] font-semibold cursor-pointer"
+                    style={{
+                      backgroundColor:
+                        tokenSystem.spacingGrid.unit === unit
+                          ? 'var(--studio-accent)'
+                          : 'var(--studio-surface-2)',
+                      color:
+                        tokenSystem.spacingGrid.unit === unit
+                          ? '#FFFFFF'
+                          : 'var(--studio-text-muted)',
+                    }}
+                  >
+                    {unit}px
+                  </button>
+                ))}
               </div>
+            </div>
+            <div className="space-y-1">
+              {(['xs', 'sm', 'md', 'lg', 'xl', '2xl'] as const).map((spKey) => {
+                const px = tokenSystem.spacingGrid[spKey];
+                return (
+                  <div
+                    key={spKey}
+                    className="flex items-center gap-2 font-mono-tech text-[9.5px]"
+                  >
+                    <span className="w-7" style={{ color: 'var(--studio-text-muted)' }}>
+                      {spKey}
+                    </span>
+                    <div className="flex-1 h-2 rounded-full bg-white/5 overflow-hidden">
+                      <div
+                        className="h-full rounded-full"
+                        style={{
+                          width: `${Math.min(100, (px / 64) * 100)}%`,
+                          background: `linear-gradient(90deg, ${doc.tokens.brandPrimary}, ${doc.tokens.brandAccent})`,
+                        }}
+                      />
+                    </div>
+                    <span className="w-8 text-right" style={{ color: 'var(--studio-cyan)' }}>
+                      {px}px
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          </section>
+
+          {/* 6. Border Radius Scale */}
+          <section className="space-y-2 pt-2 border-t" style={{ borderColor: 'var(--studio-border)' }}>
+            <div
+              className="p-2 rounded-md border space-y-1.5"
+              style={{
+                backgroundColor: 'var(--studio-surface-2)',
+                borderColor: 'var(--studio-border)',
+              }}
+            >
+              <div className="flex items-center justify-between font-mono-tech text-[10px]">
+                <span>--radius-base</span>
+                <span style={{ color: 'var(--studio-cyan)' }}>{doc.tokens.radiusBase}px</span>
+              </div>
+              <input
+                type="range"
+                data-testid="token-radius-slider"
+                min={0}
+                max={32}
+                value={doc.tokens.radiusBase}
+                onChange={(e) =>
+                  onUpdateTokens({
+                    ...doc.tokens,
+                    radiusBase: Number(e.target.value),
+                  })
+                }
+                className="w-full studio-range"
+              />
+              <div className="grid grid-cols-4 gap-1 pt-1 font-mono-tech text-[9px] text-center">
+                {(['sm', 'md', 'lg', 'xl'] as const).map((rk) => (
+                  <div
+                    key={rk}
+                    className="py-1 border"
+                    style={{
+                      borderRadius: Math.min(12, tokenSystem.radii[rk]),
+                      borderColor: 'var(--studio-border-strong)',
+                      color: 'var(--studio-text-secondary)',
+                    }}
+                  >
+                    {rk} · {tokenSystem.radii[rk]}
+                  </div>
+                ))}
+              </div>
+            </div>
+          </section>
+
+          {/* 7. Shadow Elevations */}
+          <section className="space-y-1.5 pt-2 border-t" style={{ borderColor: 'var(--studio-border)' }}>
+            <div
+              className="text-[10px] font-mono-tech uppercase tracking-wider font-semibold"
+              style={{ color: 'var(--studio-text-muted)' }}
+            >
+              {labels.tokenShadowsTitle}
+            </div>
+            <div className="grid grid-cols-2 gap-1.5">
+              {(['subtle', 'elevated', 'floating', 'neon'] as const).map((shKey) => (
+                <div
+                  key={shKey}
+                  className="h-9 rounded-lg border px-2 flex items-center justify-between font-mono-tech text-[9.5px]"
+                  style={{
+                    backgroundColor: 'var(--studio-surface-2)',
+                    borderColor: 'var(--studio-border)',
+                    boxShadow: tokenSystem.shadows[shKey],
+                  }}
+                >
+                  <span className="capitalize">{shKey}</span>
+                  <span className="w-2 h-2 rounded-full bg-indigo-400/70" />
+                </div>
+              ))}
+            </div>
+          </section>
+
+          {/* 8. Direct Token Export Bar (W3C JSON + CSS Custom Properties) */}
+          <section className="space-y-1.5 pt-2 border-t" style={{ borderColor: 'var(--studio-border)' }}>
+            {tokenExportNotice && (
+              <div className="font-mono-tech text-[10px] text-emerald-400 text-center">
+                {tokenExportNotice}
+              </div>
+            )}
+            <div className="grid grid-cols-2 gap-1.5">
+              <button
+                type="button"
+                data-testid="btn-export-tokens-css"
+                onClick={() => {
+                  const css = exportCssCustomProperties(doc.tokens);
+                  downloadTextFile(
+                    css,
+                    `${doc.tokens.id}-variables.css`,
+                    'text/css;charset=utf-8',
+                  );
+                  flashTokenNotice('Exported CSS Variables (.css)');
+                }}
+                className="h-7 px-2 rounded-lg border font-mono-tech text-[10px] font-semibold flex items-center justify-center gap-1 cursor-pointer hover:bg-white/5"
+                style={{
+                  backgroundColor: 'var(--studio-surface-2)',
+                  borderColor: 'rgba(6, 182, 212, 0.45)',
+                  color: 'var(--studio-cyan)',
+                }}
+              >
+                <Download size={10} />
+                <span>CSS Vars</span>
+              </button>
+              <button
+                type="button"
+                data-testid="btn-export-tokens-json"
+                onClick={() => {
+                  const json = exportW3CDesignTokensJson(doc.tokens);
+                  downloadTextFile(
+                    json,
+                    `${doc.tokens.id}-w3c-tokens.json`,
+                    'application/json;charset=utf-8',
+                  );
+                  flashTokenNotice('Exported W3C Tokens (.json)');
+                }}
+                className="h-7 px-2 rounded-lg text-[10px] font-mono-tech font-semibold text-white flex items-center justify-center gap-1 cursor-pointer"
+                style={{ backgroundColor: 'var(--studio-accent)' }}
+              >
+                <Download size={10} />
+                <span>W3C JSON</span>
+              </button>
             </div>
           </section>
         </div>
@@ -1133,107 +1864,14 @@ export function InspectorPanel({
                 </div>
               </section>
 
-              {/* AUTO-LAYOUT FLEX ENGINE PANEL (Frame nodes) */}
+              {/* AUTO-LAYOUT FLEX / GRID ENGINE PANEL (Frame nodes) */}
               {primary.type === 'frame' && (
-                <section
-                  data-testid="autolayout-panel"
-                  className="space-y-2 pt-2 border-t"
-                  style={{ borderColor: 'var(--studio-border)' }}
-                >
-                  <div className="flex items-center justify-between">
-                    <span className="font-mono-tech text-[10px] uppercase tracking-wider flex items-center gap-1.5" style={{ color: 'var(--studio-cyan)' }}>
-                      <LayoutGrid size={11} />
-                      <span>{labels.autoLayoutSection}</span>
-                    </span>
-                    <button
-                      type="button"
-                      data-testid="btn-toggle-autolayout"
-                      onClick={() => {
-                        const cur = primary.autoLayout ?? {
-                          enabled: false,
-                          direction: 'row' as const,
-                          gap: 16,
-                          padding: 20,
-                          align: 'center' as const,
-                        };
-                        onApplyAutoLayout(primary.id, {
-                          ...cur,
-                          enabled: !cur.enabled,
-                        });
-                      }}
-                      className="h-5 px-2 rounded font-mono-tech text-[9px] font-semibold cursor-pointer"
-                      style={{
-                        backgroundColor: primary.autoLayout?.enabled
-                          ? '#059669'
-                          : 'var(--studio-surface-2)',
-                        color: primary.autoLayout?.enabled
-                          ? '#FFFFFF'
-                          : 'var(--studio-text-muted)',
-                      }}
-                    >
-                      {primary.autoLayout?.enabled ? 'ACTIVE' : 'ENABLE'}
-                    </button>
-                  </div>
-
-                  {primary.autoLayout?.enabled && (
-                    <div className="space-y-1.5">
-                      <div className="grid grid-cols-2 gap-1.5">
-                        {(['row', 'column'] as const).map((dir) => (
-                          <button
-                            key={dir}
-                            type="button"
-                            onClick={() =>
-                              onApplyAutoLayout(primary.id, {
-                                ...primary.autoLayout!,
-                                direction: dir,
-                              })
-                            }
-                            className="h-6 rounded border font-mono-tech text-[10px] uppercase cursor-pointer"
-                            style={{
-                              backgroundColor:
-                                primary.autoLayout?.direction === dir
-                                  ? 'var(--studio-accent)'
-                                  : 'var(--studio-surface-2)',
-                              borderColor: 'var(--studio-border)',
-                              color:
-                                primary.autoLayout?.direction === dir
-                                  ? '#FFFFFF'
-                                  : 'var(--studio-text-secondary)',
-                            }}
-                          >
-                            {dir}
-                          </button>
-                        ))}
-                      </div>
-                      <div className="grid grid-cols-2 gap-1.5">
-                        <NumberField
-                          label="GAP"
-                          value={primary.autoLayout.gap}
-                          min={0}
-                          max={80}
-                          onChange={(gap) =>
-                            onApplyAutoLayout(primary.id, {
-                              ...primary.autoLayout!,
-                              gap: Math.max(0, gap),
-                            })
-                          }
-                        />
-                        <NumberField
-                          label="PAD"
-                          value={primary.autoLayout.padding}
-                          min={0}
-                          max={80}
-                          onChange={(padding) =>
-                            onApplyAutoLayout(primary.id, {
-                              ...primary.autoLayout!,
-                              padding: Math.max(0, padding),
-                            })
-                          }
-                        />
-                      </div>
-                    </div>
-                  )}
-                </section>
+                <AutoLayoutInspectorBlock
+                  title={labels.autoLayoutSection}
+                  config={primary.autoLayout}
+                  onApply={(cfg) => onApplyAutoLayout(primary.id, cfg)}
+                  testIdPrefix="frame"
+                />
               )}
 
               {/* VECTOR BEZIER PATH PANEL (Path nodes) */}
@@ -1991,13 +2629,18 @@ export function InspectorPanel({
               </div>
 
               <section className="space-y-2">
-                <div className="font-mono-tech text-[10px] uppercase tracking-wider" style={{ color: 'var(--studio-text-muted)' }}>
-                  {labels.artboardLabel}
+                <div className="flex items-center justify-between">
+                  <span className="font-mono-tech text-[10px] uppercase tracking-wider" style={{ color: 'var(--studio-text-muted)' }}>
+                    {labels.artboardLabel}
+                  </span>
+                  <span className="font-mono-tech text-[10px] truncate max-w-[140px]" style={{ color: 'var(--studio-cyan)' }}>
+                    {activeArtboard.name}
+                  </span>
                 </div>
                 <div className="grid grid-cols-2 gap-1.5">
                   <NumberField
                     label="W"
-                    value={doc.artboard.width}
+                    value={activeArtboard.width}
                     min={320}
                     onChange={(width) =>
                       onUpdateArtboard({ width: Math.max(320, width) })
@@ -2005,7 +2648,7 @@ export function InspectorPanel({
                   />
                   <NumberField
                     label="H"
-                    value={doc.artboard.height}
+                    value={activeArtboard.height}
                     min={320}
                     onChange={(height) =>
                       onUpdateArtboard({ height: Math.max(320, height) })
@@ -2013,7 +2656,7 @@ export function InspectorPanel({
                   />
                   <NumberField
                     label="RAD"
-                    value={doc.artboard.radius}
+                    value={activeArtboard.radius}
                     min={0}
                     onChange={(radius) =>
                       onUpdateArtboard({ radius: Math.max(0, radius) })
@@ -2028,7 +2671,7 @@ export function InspectorPanel({
                   >
                     <input
                       type="color"
-                      value={doc.artboard.background.color}
+                      value={activeArtboard.background.color}
                       onChange={(e) =>
                         onUpdateArtboard({
                           background: { kind: 'solid', color: e.target.value },
@@ -2038,11 +2681,19 @@ export function InspectorPanel({
                       className="w-4 h-4 bg-transparent border-0 cursor-pointer"
                     />
                     <span className="font-mono-tech text-[10px] truncate">
-                      {doc.artboard.background.color}
+                      {activeArtboard.background.color}
                     </span>
                   </label>
                 </div>
               </section>
+
+              {/* Artboard CSS Flexbox / Grid Auto-Layout Inspector */}
+              <AutoLayoutInspectorBlock
+                title={labels.autoLayoutSection}
+                config={activeArtboard.autoLayout}
+                onApply={onApplyArtboardAutoLayout}
+                testIdPrefix="artboard"
+              />
             </div>
           )}
         </div>

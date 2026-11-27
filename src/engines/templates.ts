@@ -33,7 +33,7 @@ function makeBaseNode(
 }
 
 function createFintechSpatialDoc(): DocumentState {
-  const tokens = getTokenThemeById('obsidian-electric');
+  const tokens = getTokenThemeById('obsidian-pro');
   const primaryArtboard: Artboard = {
     id: 'artboard-fintech',
     name: 'Treasury Overview',
@@ -339,7 +339,7 @@ function createFintechSpatialDoc(): DocumentState {
           hoverEffect: 'lift-glow',
           clickAction: 'navigate_artboard',
           targetArtboardId: 'artboard-checkout',
-          transition: 'slide-left',
+          transition: 'smart-animate',
         },
       }),
       makeBaseNode({
@@ -782,6 +782,16 @@ function createFintechSpatialDoc(): DocumentState {
           fill: 'surfaceElevated',
           stroke: 'borderSubtle',
           textColor: 'textPrimary',
+        },
+        prototype: {
+          entrance: 'fade-up',
+          durationMs: 480,
+          delayMs: 220,
+          easing: 'expo-out',
+          hoverEffect: 'lift-glow',
+          clickAction: 'modal_overlay',
+          targetArtboardId: 'artboard-checkout',
+          transition: 'modal-overlay',
         },
       }),
 
@@ -1487,6 +1497,15 @@ function createAiSaasHeroDoc(): DocumentState {
           fill: 'surfaceElevated',
           stroke: 'borderSubtle',
           textColor: 'textPrimary',
+        },
+        prototype: {
+          entrance: 'fade-up',
+          durationMs: 420,
+          delayMs: 120,
+          easing: 'expo-out',
+          hoverEffect: 'scale',
+          clickAction: 'toast',
+          clickPayload: 'Opening Enterprise Cloud Console...',
         },
       }),
       makeBaseNode({

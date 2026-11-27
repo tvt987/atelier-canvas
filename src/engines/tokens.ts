@@ -6,8 +6,15 @@ import type {
   FillConfig,
   ShadowPreset,
 } from '../types/canvas';
+import {
+  exportCssCustomProperties,
+  exportW3CDesignTokensJson,
+  FLAGSHIP_V4_THEMES,
+} from './designTokens';
 
-export const BRAND_TOKEN_THEMES: DesignTokens[] = [
+export { FLAGSHIP_V4_THEMES, exportCssCustomProperties, exportW3CDesignTokensJson };
+
+export const LEGACY_V3_THEMES: DesignTokens[] = [
   {
     id: 'obsidian-electric',
     name: 'Obsidian Electric',
@@ -66,6 +73,16 @@ export const BRAND_TOKEN_THEMES: DesignTokens[] = [
   },
 ];
 
+export const BRAND_TOKEN_THEMES: DesignTokens[] = [
+  ...FLAGSHIP_V4_THEMES,
+  ...LEGACY_V3_THEMES.filter((t) => t.id !== 'obsidian-electric'),
+];
+
+export const ALL_TOKEN_THEMES: DesignTokens[] = [
+  ...FLAGSHIP_V4_THEMES,
+  ...LEGACY_V3_THEMES,
+];
+
 export const COLOR_TOKEN_META: Array<{
   key: ColorTokenKey;
   cssVar: string;
@@ -83,7 +100,7 @@ export const COLOR_TOKEN_META: Array<{
 
 export function getTokenThemeById(id: string): DesignTokens {
   return (
-    BRAND_TOKEN_THEMES.find((t) => t.id === id) ?? BRAND_TOKEN_THEMES[0]
+    ALL_TOKEN_THEMES.find((t) => t.id === id) ?? FLAGSHIP_V4_THEMES[0]
   );
 }
 
@@ -214,35 +231,5 @@ export function resolveArtboardBackground(
 }
 
 export function tokensToW3CJson(tokens: DesignTokens): string {
-  const payload = {
-    $schema: 'https://design-tokens.org/schemas/v1/tokens.json',
-    atelierTheme: {
-      id: { $value: tokens.id, $type: 'string' },
-      name: { $value: tokens.name, $type: 'string' },
-    },
-    color: {
-      brand: {
-        primary: { $value: tokens.brandPrimary, $type: 'color' },
-        accent: { $value: tokens.brandAccent, $type: 'color' },
-      },
-      surface: {
-        canvas: { $value: tokens.surfaceCanvas, $type: 'color' },
-        card: { $value: tokens.surfaceCard, $type: 'color' },
-        elevated: { $value: tokens.surfaceElevated, $type: 'color' },
-      },
-      border: {
-        subtle: { $value: tokens.borderSubtle, $type: 'color' },
-      },
-      text: {
-        primary: { $value: tokens.textPrimary, $type: 'color' },
-        muted: { $value: tokens.textMuted, $type: 'color' },
-      },
-    },
-    dimension: {
-      radius: {
-        base: { $value: `${tokens.radiusBase}px`, $type: 'dimension' },
-      },
-    },
-  };
-  return JSON.stringify(payload, null, 2);
+  return exportW3CDesignTokensJson(tokens);
 }

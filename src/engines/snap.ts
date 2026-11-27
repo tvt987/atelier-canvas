@@ -6,12 +6,38 @@ export interface SnapResult {
   guides: SnapGuide[];
 }
 
+export interface SnapOptions {
+  threshold?: number;
+  gridSize?: number;
+  smartGuidesEnabled?: boolean;
+}
+
 export function computeSnap(
   moving: Bounds,
   siblings: Bounds[],
   artboard: Bounds,
-  threshold = 6,
+  thresholdOrOptions: number | SnapOptions = 6,
 ): SnapResult {
+  const options: SnapOptions =
+    typeof thresholdOrOptions === 'number'
+      ? { threshold: thresholdOrOptions, smartGuidesEnabled: true }
+      : thresholdOrOptions;
+  const threshold = options.threshold ?? 6;
+  const gridSize = options.gridSize ?? 0;
+  const smartGuidesEnabled = options.smartGuidesEnabled ?? true;
+
+  if (!smartGuidesEnabled) {
+    const rawX =
+      gridSize > 0
+        ? Math.round(moving.x / gridSize) * gridSize
+        : Math.round(moving.x);
+    const rawY =
+      gridSize > 0
+        ? Math.round(moving.y / gridSize) * gridSize
+        : Math.round(moving.y);
+    return { x: rawX, y: rawY, guides: [] };
+  }
+
   const targets: Bounds[] = [artboard, ...siblings];
 
   const movingXAnchors = [
@@ -77,8 +103,18 @@ export function computeSnap(
     }
   }
 
-  const snappedX = Math.round(moving.x + (bestDx ?? 0));
-  const snappedY = Math.round(moving.y + (bestDy ?? 0));
+  const snappedX =
+    bestDx !== null
+      ? Math.round(moving.x + bestDx)
+      : gridSize > 0
+        ? Math.round(moving.x / gridSize) * gridSize
+        : Math.round(moving.x);
+  const snappedY =
+    bestDy !== null
+      ? Math.round(moving.y + bestDy)
+      : gridSize > 0
+        ? Math.round(moving.y / gridSize) * gridSize
+        : Math.round(moving.y);
   const guides: SnapGuide[] = [];
 
   if (matchedVGuide) {

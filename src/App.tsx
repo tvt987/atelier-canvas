@@ -14,6 +14,7 @@ import type {
   ToolType,
   UiMode,
   Viewport,
+  ViewportBreakpoint,
 } from './types/canvas';
 import { createDocumentByTemplateId } from './engines/templates';
 import {
@@ -28,6 +29,7 @@ import {
 import {
   clampZoom,
   fitArtboardsToViewport,
+  fitArtboardToViewport,
   zoomAtPoint,
 } from './engines/viewport';
 import {
@@ -38,7 +40,12 @@ import {
   createGeneratedNodesForCommand,
   resolveThemeCommand,
 } from './engines/commands';
-import { applyAutoLayoutToFrame } from './engines/autolayout';
+import {
+  applyAutoLayoutToArtboard,
+  applyAutoLayoutToFrame,
+} from './engines/autolayout';
+import { applyDesignTokenTheme } from './engines/designTokens';
+import { getBreakpointPreset } from './engines/responsive';
 import { instantiateAssetKitItem } from './engines/assets';
 import { generateReactTailwind } from './engines/codegen';
 import { downloadTextFile, exportNodeToSvg } from './engines/exporter';
@@ -61,6 +68,7 @@ import { InspectorPanel, type AlignDirection } from './components/InspectorPanel
 import { CommandPalette } from './components/CommandPalette';
 import { ExportModal } from './components/ExportModal';
 import { PrototypePlayerModal } from './components/PrototypePlayerModal';
+import { EnterpriseLicenseModal } from './components/EnterpriseLicenseModal';
 
 const TOOL_HOTKEYS: Record<string, ToolType> = {
   v: 'select',
@@ -101,7 +109,7 @@ export function App() {
   const [snapshots, setSnapshots] = useState<DesignSnapshot[]>(() => [
     {
       id: 'snap-initial',
-      label: 'v3.0 Multi-Screen FinTech',
+      label: 'v4.0 Enterprise FinTech',
       timestamp: formatClock(),
       doc: createDocumentByTemplateId('fintech-spatial'),
     },
@@ -120,12 +128,17 @@ export function App() {
   const [chromeTheme, setChromeTheme] = useState<ChromeTheme>('dark');
   const [locale, setLocale] = useState<Locale>('en');
   const [layersOpen, setLayersOpen] = useState(true);
+  const [mobileInspectorOpen, setMobileInspectorOpen] = useState(false);
+  const [breakpoint, setBreakpoint] = useState<ViewportBreakpoint>('fluid');
+  const [smartGuidesEnabled, setSmartGuidesEnabled] = useState(true);
+  const [snapToGrid8px, setSnapToGrid8px] = useState(false);
   const [spacePressed, setSpacePressed] = useState(false);
   const [altPressed, setAltPressed] = useState(false);
   const [stack3D, setStack3D] = useState(false);
   const [commandOpen, setCommandOpen] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
   const [playerOpen, setPlayerOpen] = useState(false);
+  const [enterpriseOpen, setEnterpriseOpen] = useState(false);
   const [coDesignerActive, setCoDesignerActive] = useState(false);
   const [coDesignerStep, setCoDesignerStep] = useState(0);
   const [crdtRevisions, setCrdtRevisions] = useState(1);
@@ -151,6 +164,10 @@ export function App() {
   const artboards = useMemo(
     () => getDocumentArtboards(effectiveDoc),
     [effectiveDoc],
+  );
+  const activeArtboard = useMemo(
+    () => artboards.find((a) => a.id === activeArtboardId) ?? effectiveDoc.artboard,
+    [artboards, activeArtboardId, effectiveDoc.artboard],
   );
 
   const labels = LABELS[locale];
@@ -469,10 +486,78 @@ export function App() {
         }),
       );
       if (config.enabled) {
-        notify(`Auto-Layout applied (${config.direction}, gap ${config.gap}px)`);
+        const modeLbl =
+          config.layoutMode === 'grid'
+            ? `Grid ${config.columns ?? 2}-col`
+            : `Flex ${config.direction}`;
+        notify(`Auto-Layout applied (${modeLbl}, gap ${config.gap}px)`);
       }
     },
     [notify],
+  );
+
+  const handleApplyArtboardAutoLayout = useCallback(
+    (config: AutoLayoutConfig) => {
+      setHistory((prev) => {
+        const boards = getDocumentArtboards(prev.present);
+        const target =
+          boards.find((b) => b.id === activeArtboardId) ?? prev.present.artboard;
+        const { artboard: nextBoard, nodes: nextNodes } =
+          applyAutoLayoutToArtboard(
+            target,
+            prev.present.nodes,
+            config,
+            prev.present.artboard.id,
+          );
+        const updatedBoards = boards.map((b) =>
+          b.id === target.id ? nextBoard : b,
+        );
+        const nextPrimary =
+          prev.present.artboard.id === target.id
+            ? nextBoard
+            : prev.present.artboard;
+        return pushHistory(prev, {
+          ...prev.present,
+          artboard: nextPrimary,
+          artboards: updatedBoards,
+          nodes: nextNodes,
+        });
+      });
+      if (config.enabled) {
+        const modeLbl =
+          config.layoutMode === 'grid'
+            ? `CSS Grid ${config.columns ?? 2}-col`
+            : `Flexbox ${config.direction}`;
+        notify(`Artboard Auto-Layout: ${modeLbl} · gap ${config.gap}px`);
+      }
+    },
+    [activeArtboardId, notify],
+  );
+
+  const handleSelectBreakpoint = useCallback(
+    (nextBp: ViewportBreakpoint) => {
+      setBreakpoint(nextBp);
+      const preset = getBreakpointPreset(nextBp);
+      if (nextBp === 'fluid') {
+        setViewport(
+          fitArtboardsToViewport(
+            getDocumentArtboards(committedDoc),
+            stageSizeRef.current,
+            52,
+          ),
+        );
+        notify('Viewport: Fluid Fit (All Artboards)');
+        return;
+      }
+      const targetBoard =
+        getDocumentArtboards(committedDoc).find((b) => b.id === activeArtboardId) ??
+        committedDoc.artboard;
+      setViewport(
+        fitArtboardToViewport(targetBoard, stageSizeRef.current, 60),
+      );
+      notify(`Viewport: ${preset.label} · ${preset.columns}-Col Grid`);
+    },
+    [activeArtboardId, committedDoc, notify],
   );
 
   const handleUpdateArtboard = useCallback(
@@ -496,14 +581,15 @@ export function App() {
     [activeArtboardId],
   );
 
-  const handleUpdateTokens = useCallback((nextTokens: DesignTokens) => {
-    setHistory((prev) =>
-      pushHistory(prev, {
-        ...prev.present,
-        tokens: nextTokens,
-      }),
-    );
-  }, []);
+  const handleUpdateTokens = useCallback(
+    (nextTokens: DesignTokens) => {
+      setHistory((prev) =>
+        pushHistory(prev, applyDesignTokenTheme(prev.present, nextTokens)),
+      );
+      notify(`Design Tokens applied: ${nextTokens.name}`);
+    },
+    [notify],
+  );
 
   const handleInsertAsset = useCallback(
     (assetId: string) => {
@@ -809,6 +895,15 @@ export function App() {
         setPlayerOpen(true);
         return;
       }
+      if (commandId === 'enterprise-license') {
+        setEnterpriseOpen(true);
+        return;
+      }
+      if (commandId === 'layout-toggle-grid-8px') {
+        setSnapToGrid8px((v) => !v);
+        notify('Toggled 8px Baseline Snap Grid');
+        return;
+      }
       if (commandId === 'mode-prototype') {
         setUiMode('prototype');
         return;
@@ -857,6 +952,7 @@ export function App() {
       handleSaveSnapshot,
       handleSelectTemplate,
       handleUpdateTokens,
+      notify,
     ],
   );
 
@@ -1011,6 +1107,9 @@ export function App() {
         uiMode={uiMode}
         onSetUiMode={setUiMode}
         onOpenPrototypePlayer={() => setPlayerOpen(true)}
+        onOpenEnterpriseModal={() => setEnterpriseOpen(true)}
+        mobileInspectorOpen={mobileInspectorOpen}
+        onToggleMobileInspector={() => setMobileInspectorOpen((v) => !v)}
         snapshots={snapshots}
         onSaveSnapshot={handleSaveSnapshot}
         onRestoreSnapshot={handleRestoreSnapshot}
@@ -1094,6 +1193,12 @@ export function App() {
           altPressed={altPressed}
           stack3D={stack3D}
           onToggleStack3D={() => setStack3D((v) => !v)}
+          breakpoint={breakpoint}
+          onSelectBreakpoint={handleSelectBreakpoint}
+          smartGuidesEnabled={smartGuidesEnabled}
+          onToggleSmartGuides={() => setSmartGuidesEnabled((v) => !v)}
+          snapToGrid8px={snapToGrid8px}
+          onToggleSnapToGrid8px={() => setSnapToGrid8px((v) => !v)}
           onLiveUpdateNodes={handleLiveUpdateNodes}
           onCommitNodes={handleCommitNodes}
           onContextAction={handleContextAction}
@@ -1107,6 +1212,7 @@ export function App() {
 
         <InspectorPanel
           doc={effectiveDoc}
+          activeArtboard={activeArtboard}
           selectedNodes={selectedNodes}
           uiMode={uiMode}
           activeTab={inspectorTab}
@@ -1114,11 +1220,15 @@ export function App() {
           onSelectIds={setSelectedIds}
           onUpdateNode={handleUpdateNode}
           onApplyAutoLayout={handleApplyAutoLayout}
+          onApplyArtboardAutoLayout={handleApplyArtboardAutoLayout}
           onUpdateArtboard={handleUpdateArtboard}
           onUpdateTokens={handleUpdateTokens}
           onAlignSelection={handleAlignSelection}
           onOpenExportModal={() => setExportOpen(true)}
           onOpenPrototypePlayer={() => setPlayerOpen(true)}
+          onOpenEnterpriseModal={() => setEnterpriseOpen(true)}
+          mobileOpen={mobileInspectorOpen}
+          onCloseMobile={() => setMobileInspectorOpen(false)}
           labels={labels}
         />
       </main>
@@ -1157,6 +1267,12 @@ export function App() {
         doc={effectiveDoc}
         onUpdateTokens={handleUpdateTokens}
         onSwitchTemplate={handleSelectTemplate}
+      />
+
+      <EnterpriseLicenseModal
+        open={enterpriseOpen}
+        onClose={() => setEnterpriseOpen(false)}
+        locale={locale}
       />
     </div>
   );

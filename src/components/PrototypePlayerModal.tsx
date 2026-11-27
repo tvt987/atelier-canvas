@@ -1,7 +1,10 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
+  ArrowLeft,
   CheckCircle2,
   ChevronRight,
+  Eye,
+  EyeOff,
   Laptop,
   Monitor,
   Palette,
@@ -11,6 +14,7 @@ import {
   Zap,
 } from 'lucide-react';
 import type {
+  Artboard,
   CanvasNode,
   DesignTokens,
   DeviceFrameMode,
@@ -19,7 +23,7 @@ import type {
   ScreenTransition,
 } from '../types/canvas';
 import {
-  BRAND_TOKEN_THEMES,
+  FLAGSHIP_V4_THEMES,
   resolveArtboardBackground,
   resolveNodeStyle,
 } from '../engines/tokens';
@@ -41,6 +45,30 @@ function easingToCss(easing: PrototypeConfig['easing']): string {
   return 'ease-in-out';
 }
 
+function getHotspotBadgeLabel(
+  proto: PrototypeConfig,
+  artboards: Artboard[],
+): string {
+  if (proto.clickAction === 'modal_overlay') {
+    const dst = artboards.find((a) => a.id === proto.targetArtboardId);
+    return `Modal Overlay -> ${dst?.name ?? 'Overlay'}`;
+  }
+  if (proto.clickAction === 'smart_animate') {
+    const dst = artboards.find((a) => a.id === proto.targetArtboardId);
+    return `Smart Animate -> ${dst?.name ?? 'Screen'}`;
+  }
+  if (proto.clickAction === 'navigate_artboard') {
+    const dst = artboards.find((a) => a.id === proto.targetArtboardId);
+    const kind =
+      proto.transition === 'smart-animate' ? 'Smart Animate' : 'Navigate To';
+    return `${kind} -> ${dst?.name ?? 'Screen'}`;
+  }
+  if (proto.clickAction === 'toggle-theme') return 'Morph Live Token Theme';
+  if (proto.clickAction === 'pulse-target') return 'Pulse Target Layer';
+  if (proto.clickAction === 'toast') return 'Trigger Toast Action';
+  return 'Interactive Hotspot';
+}
+
 export function PrototypePlayerModal({
   open,
   onClose,
@@ -50,9 +78,12 @@ export function PrototypePlayerModal({
 }: PrototypePlayerModalProps) {
   const artboards = getDocumentArtboards(doc);
   const [activeArtboardId, setActiveArtboardId] = useState(doc.artboard.id);
+  const [navHistory, setNavHistory] = useState<string[]>([]);
+  const [overlayArtboardId, setOverlayArtboardId] = useState<string | null>(null);
   const [activeTransition, setActiveTransition] =
-    useState<ScreenTransition>('slide-left');
+    useState<ScreenTransition>('smart-animate');
   const [device, setDevice] = useState<DeviceFrameMode>('studio');
+  const [showHotspots, setShowHotspots] = useState(true);
   const [replayKey, setReplayKey] = useState(1);
   const [toastMsg, setToastMsg] = useState<string | null>(null);
   const [pulsingId, setPulsingId] = useState<string | null>(null);
@@ -60,6 +91,8 @@ export function PrototypePlayerModal({
   useEffect(() => {
     if (open) {
       setActiveArtboardId(doc.artboard.id);
+      setNavHistory([]);
+      setOverlayArtboardId(null);
       setReplayKey((k) => k + 1);
       setToastMsg(null);
     }
@@ -68,21 +101,49 @@ export function PrototypePlayerModal({
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
-      if (e.key.toLowerCase() === 'r') setReplayKey((k) => k + 1);
+      if (e.key === 'Escape') {
+        if (overlayArtboardId) {
+          setOverlayArtboardId(null);
+        } else {
+          onClose();
+        }
+      } else if (e.key.toLowerCase() === 'r') {
+        setReplayKey((k) => k + 1);
+      } else if (e.key.toLowerCase() === 'h') {
+        setShowHotspots((v) => !v);
+      }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [open, onClose]);
+  }, [open, onClose, overlayArtboardId]);
+
+  const activeBoard = useMemo(
+    () => artboards.find((a) => a.id === activeArtboardId) ?? doc.artboard,
+    [artboards, activeArtboardId, doc.artboard],
+  );
+
+  const overlayBoard = useMemo(
+    () =>
+      overlayArtboardId
+        ? artboards.find((a) => a.id === overlayArtboardId) ?? null
+        : null,
+    [artboards, overlayArtboardId],
+  );
+
+  const boardNodes = useMemo(
+    () => getNodesForArtboard(doc, activeBoard.id).filter((n) => n.visible),
+    [doc, activeBoard.id],
+  );
+
+  const hotspotCount = useMemo(
+    () =>
+      boardNodes.filter(
+        (n) => n.prototype && n.prototype.clickAction !== 'none',
+      ).length,
+    [boardNodes],
+  );
 
   if (!open) return null;
-
-  const activeBoard =
-    artboards.find((a) => a.id === activeArtboardId) ?? doc.artboard;
-  const boardNodes = getNodesForArtboard(doc, activeBoard.id).filter(
-    (n) => n.visible,
-  );
-  const artboardBg = resolveArtboardBackground(activeBoard, doc.tokens);
 
   const triggerToast = (msg: string) => {
     setToastMsg(msg);
@@ -93,25 +154,52 @@ export function PrototypePlayerModal({
 
   const navigateToScreen = (
     targetId: string,
-    transition: ScreenTransition = 'slide-left',
+    transition: ScreenTransition = 'smart-animate',
+    pushHistory = true,
   ) => {
     const exists = artboards.find((a) => a.id === targetId);
     if (!exists) return;
+    if (pushHistory && exists.id !== activeBoard.id) {
+      setNavHistory((prev) => [...prev, activeBoard.id]);
+    }
+    setOverlayArtboardId(null);
     setActiveTransition(transition);
     setActiveArtboardId(exists.id);
     setReplayKey((k) => k + 1);
-    triggerToast(`Navigated -> ${exists.name} (${transition})`);
+    triggerToast(`Transition: ${transition} -> ${exists.name}`);
+  };
+
+  const handleGoBack = () => {
+    if (overlayArtboardId) {
+      setOverlayArtboardId(null);
+      return;
+    }
+    if (navHistory.length === 0) return;
+    const prevId = navHistory[navHistory.length - 1];
+    setNavHistory((h) => h.slice(0, -1));
+    navigateToScreen(prevId, 'smart-animate', false);
   };
 
   const handleNodeClick = (node: CanvasNode) => {
     const proto = node.prototype;
     if (!proto || proto.clickAction === 'none') return;
 
-    if (proto.clickAction === 'navigate_artboard' && proto.targetArtboardId) {
-      navigateToScreen(
-        proto.targetArtboardId,
-        proto.transition ?? 'slide-left',
-      );
+    if (proto.clickAction === 'modal_overlay' && proto.targetArtboardId) {
+      const target = artboards.find((a) => a.id === proto.targetArtboardId);
+      if (target) {
+        setOverlayArtboardId(target.id);
+        triggerToast(`Modal Overlay opened -> ${target.name}`);
+      }
+    } else if (
+      (proto.clickAction === 'navigate_artboard' ||
+        proto.clickAction === 'smart_animate') &&
+      proto.targetArtboardId
+    ) {
+      const resolvedTransition: ScreenTransition =
+        proto.clickAction === 'smart_animate'
+          ? 'smart-animate'
+          : (proto.transition ?? 'smart-animate');
+      navigateToScreen(proto.targetArtboardId, resolvedTransition);
     } else if (proto.clickAction === 'toast') {
       triggerToast(proto.clickPayload || `${node.name} interaction executed`);
     } else if (proto.clickAction === 'pulse-target') {
@@ -120,11 +208,11 @@ export function PrototypePlayerModal({
       triggerToast(`Highlighted target layer: ${targetId}`);
       window.setTimeout(() => setPulsingId(null), 1900);
     } else if (proto.clickAction === 'toggle-theme') {
-      const idx = BRAND_TOKEN_THEMES.findIndex((t) => t.id === doc.tokens.id);
+      const idx = FLAGSHIP_V4_THEMES.findIndex((t) => t.id === doc.tokens.id);
       const nextTheme =
-        BRAND_TOKEN_THEMES[(idx + 1) % BRAND_TOKEN_THEMES.length];
+        FLAGSHIP_V4_THEMES[(idx + 1) % FLAGSHIP_V4_THEMES.length];
       onUpdateTokens(nextTheme);
-      triggerToast(`Morphed live tokens -> ${nextTheme.name}`);
+      triggerToast(`Morphed live Design Tokens -> ${nextTheme.name}`);
     } else if (proto.clickAction === 'switch-template') {
       const targetTemplate = proto.clickPayload || 'ai-saas-hero';
       onSwitchTemplate(targetTemplate);
@@ -135,20 +223,216 @@ export function PrototypePlayerModal({
 
   const scale =
     device === 'iphone'
-      ? Math.min(340 / activeBoard.width, 600 / activeBoard.height, 0.92)
+      ? Math.min(340 / activeBoard.width, 580 / activeBoard.height, 0.92)
       : device === 'macbook'
-        ? Math.min(820 / activeBoard.width, 500 / activeBoard.height, 0.94)
-        : Math.min(920 / activeBoard.width, 600 / activeBoard.height, 1);
+        ? Math.min(820 / activeBoard.width, 490 / activeBoard.height, 0.94)
+        : Math.min(920 / activeBoard.width, 590 / activeBoard.height, 1);
 
   const scaledW = Math.round(activeBoard.width * scale);
   const scaledH = Math.round(activeBoard.height * scale);
 
   const screenEntranceCss =
-    activeTransition === 'slide-left'
-      ? 'atelier-slide-left 360ms cubic-bezier(0.16, 1, 0.3, 1) both'
-      : activeTransition === 'spring-scale'
-        ? 'atelier-spring-scale 400ms cubic-bezier(0.34, 1.56, 0.64, 1) both'
-        : 'atelier-fade-up 300ms ease-out both';
+    activeTransition === 'smart-animate'
+      ? 'atelier-smart-animate 420ms cubic-bezier(0.22, 1, 0.36, 1) both'
+      : activeTransition === 'slide-left'
+        ? 'atelier-slide-left 360ms cubic-bezier(0.16, 1, 0.3, 1) both'
+        : activeTransition === 'spring-scale'
+          ? 'atelier-spring-scale 400ms cubic-bezier(0.34, 1.56, 0.64, 1) both'
+          : 'atelier-fade-up 300ms ease-out both';
+
+  const renderNodesInsideBoard = (
+    board: Artboard,
+    nodesToRender: CanvasNode[],
+    allowHotspots: boolean,
+  ) =>
+    nodesToRender.map((node) => {
+      const style = resolveNodeStyle(node, doc.tokens);
+      const proto = node.prototype;
+      const hoverClass =
+        proto && proto.hoverEffect !== 'none'
+          ? `proto-hover-${proto.hoverEffect}`
+          : '';
+      const isInteractive = Boolean(proto && proto.clickAction !== 'none');
+      const isPulsing = pulsingId === node.id;
+
+      const animName =
+        proto && proto.entrance !== 'none'
+          ? `atelier-${proto.entrance}`
+          : undefined;
+      const isLooping =
+        proto?.entrance === 'float-levitate' ||
+        proto?.entrance === 'shimmer-glow';
+
+      const animCss =
+        animName && proto
+          ? `${animName} ${proto.durationMs}ms ${easingToCss(proto.easing)} ${proto.delayMs}ms ${isLooping ? 'infinite' : 'both'}`
+          : undefined;
+
+      const hotspotOverlay =
+        allowHotspots && showHotspots && isInteractive && proto ? (
+          <div
+            data-testid={`proto-hotspot-${node.id}`}
+            title={getHotspotBadgeLabel(proto, artboards)}
+            className="pointer-events-none absolute -inset-1 rounded-[inherit] border-2 border-emerald-400/80 proto-hotspot-ring"
+          >
+            <span
+              className="absolute -top-2.5 -right-2.5 w-5 h-5 rounded-full bg-emerald-400 text-slate-950 flex items-center justify-center shadow-lg"
+            >
+              <Zap size={10} strokeWidth={2.4} />
+            </span>
+          </div>
+        ) : null;
+
+      if (node.type === 'image') {
+        const filterCss = buildImageFilterCss(node.imageFilter);
+        return (
+          <div
+            key={node.id}
+            data-testid={`proto-node-${node.id}`}
+            onClick={() => handleNodeClick(node)}
+            className={`absolute overflow-visible ${hoverClass} ${isPulsing ? 'proto-pulsing' : ''}`}
+            style={{
+              left: node.x - board.x,
+              top: node.y - board.y,
+              width: node.width,
+              height: node.height,
+              borderRadius: style.radius,
+              opacity: node.opacity,
+              border:
+                node.strokeWidth > 0
+                  ? `${node.strokeWidth}px solid ${style.strokeColor}`
+                  : undefined,
+              boxShadow:
+                style.boxShadow !== 'none' ? style.boxShadow : undefined,
+              animation: animCss,
+              cursor: isInteractive ? 'pointer' : 'default',
+            }}
+          >
+            <div className="w-full h-full overflow-hidden rounded-[inherit]">
+              <img
+                src={node.imageSrc}
+                alt={node.name}
+                className="w-full h-full pointer-events-none"
+                style={{
+                  objectFit: node.objectFit ?? 'cover',
+                  filter: filterCss,
+                }}
+              />
+            </div>
+            {hotspotOverlay}
+          </div>
+        );
+      }
+
+      if (node.type === 'path' && node.pathData) {
+        const d = buildSvgPathData(
+          node.pathData.points,
+          node.pathData.smooth !== false,
+          Boolean(node.pathData.closed),
+        );
+        const dash =
+          node.pathData.dashStyle === 'dashed'
+            ? '8 6'
+            : node.pathData.dashStyle === 'dotted'
+              ? '2 6'
+              : undefined;
+        return (
+          <svg
+            key={node.id}
+            className={`absolute overflow-visible ${hoverClass}`}
+            style={{
+              left: node.x - board.x,
+              top: node.y - board.y,
+              width: node.width,
+              height: node.height,
+              opacity: node.opacity,
+              animation: animCss,
+              filter: node.pathData.glow
+                ? `drop-shadow(0 0 8px ${style.strokeColor})`
+                : undefined,
+            }}
+            viewBox={`0 0 ${node.width} ${node.height}`}
+            fill="none"
+          >
+            <path
+              d={d}
+              stroke={style.strokeColor}
+              strokeWidth={Math.max(1.5, node.strokeWidth || 2.5)}
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeDasharray={dash}
+            />
+          </svg>
+        );
+      }
+
+      return (
+        <div
+          key={node.id}
+          data-testid={`proto-node-${node.id}`}
+          onClick={() => handleNodeClick(node)}
+          className={`absolute ${hoverClass} ${isPulsing ? 'proto-pulsing' : ''}`}
+          style={{
+            left: node.x - board.x,
+            top: node.y - board.y,
+            width: node.width,
+            height: node.height,
+            transform:
+              node.rotation !== 0 ? `rotate(${node.rotation}deg)` : undefined,
+            borderRadius: style.radius,
+            opacity: node.opacity,
+            background:
+              node.type === 'text' ? 'transparent' : style.cssBackground,
+            border:
+              node.strokeWidth > 0
+                ? `${node.strokeWidth}px solid ${style.strokeColor}`
+                : undefined,
+            backdropFilter: node.blur > 0 ? `blur(${node.blur}px)` : undefined,
+            WebkitBackdropFilter:
+              node.blur > 0 ? `blur(${node.blur}px)` : undefined,
+            boxShadow:
+              style.boxShadow !== 'none' ? style.boxShadow : undefined,
+            mixBlendMode: node.blendMode,
+            animation: animCss,
+            cursor: isInteractive ? 'pointer' : 'default',
+            display:
+              node.type === 'button' || node.type === 'text'
+                ? 'flex'
+                : undefined,
+            alignItems: node.type === 'button' ? 'center' : 'flex-start',
+            justifyContent:
+              node.type === 'button'
+                ? 'center'
+                : node.textAlign === 'center'
+                  ? 'center'
+                  : node.textAlign === 'right'
+                    ? 'flex-end'
+                    : 'flex-start',
+          }}
+        >
+          {(node.type === 'text' || node.type === 'button') && (
+            <span
+              className="w-full"
+              style={{
+                color: style.textColor,
+                fontFamily: node.fontFamily ?? 'Inter',
+                fontWeight: node.fontWeight ?? 500,
+                fontSize: node.fontSize ?? 14,
+                letterSpacing: node.letterSpacing ?? 0,
+                lineHeight: node.lineHeight ?? 1.25,
+                textAlign: node.textAlign ?? 'left',
+                whiteSpace: 'pre-wrap',
+              }}
+            >
+              {node.text}
+            </span>
+          )}
+          {hotspotOverlay}
+        </div>
+      );
+    });
+
+  const artboardBg = resolveArtboardBackground(activeBoard, doc.tokens);
 
   const renderArtboard = () => (
     <div
@@ -178,174 +462,69 @@ export function PrototypePlayerModal({
           transformOrigin: 'top left',
         }}
       >
-        {boardNodes.map((node) => {
-          const style = resolveNodeStyle(node, doc.tokens);
-          const proto = node.prototype;
-          const hoverClass =
-            proto && proto.hoverEffect !== 'none'
-              ? `proto-hover-${proto.hoverEffect}`
-              : '';
-          const isInteractive = Boolean(proto && proto.clickAction !== 'none');
-          const isPulsing = pulsingId === node.id;
+        {renderNodesInsideBoard(activeBoard, boardNodes, !overlayBoard)}
+      </div>
 
-          const animName =
-            proto && proto.entrance !== 'none'
-              ? `atelier-${proto.entrance}`
-              : undefined;
-          const isLooping =
-            proto?.entrance === 'float-levitate' ||
-            proto?.entrance === 'shimmer-glow';
-
-          const animCss =
-            animName && proto
-              ? `${animName} ${proto.durationMs}ms ${easingToCss(proto.easing)} ${proto.delayMs}ms ${isLooping ? 'infinite' : 'both'}`
-              : undefined;
-
-          if (node.type === 'image') {
-            const filterCss = buildImageFilterCss(node.imageFilter);
+      {/* Live Modal Overlay Layer */}
+      {overlayBoard && (
+        <div
+          data-testid="proto-modal-overlay"
+          onClick={() => setOverlayArtboardId(null)}
+          className="absolute inset-0 z-30 bg-black/65 backdrop-blur-md flex items-center justify-center p-4"
+        >
+          {(() => {
+            const ovScale = Math.min(
+              (scaledW - 36) / overlayBoard.width,
+              (scaledH - 36) / overlayBoard.height,
+              scale * 0.92,
+            );
+            const ovW = Math.round(overlayBoard.width * ovScale);
+            const ovH = Math.round(overlayBoard.height * ovScale);
+            const ovBg = resolveArtboardBackground(overlayBoard, doc.tokens);
+            const ovNodes = getNodesForArtboard(doc, overlayBoard.id).filter(
+              (n) => n.visible,
+            );
             return (
               <div
-                key={node.id}
-                data-testid={`proto-node-${node.id}`}
-                onClick={() => handleNodeClick(node)}
-                className={`absolute overflow-hidden ${hoverClass} ${isPulsing ? 'proto-pulsing' : ''}`}
+                onClick={(e) => e.stopPropagation()}
+                className="relative shadow-2xl"
                 style={{
-                  left: node.x - activeBoard.x,
-                  top: node.y - activeBoard.y,
-                  width: node.width,
-                  height: node.height,
-                  borderRadius: style.radius,
-                  opacity: node.opacity,
-                  border:
-                    node.strokeWidth > 0
-                      ? `${node.strokeWidth}px solid ${style.strokeColor}`
-                      : undefined,
+                  width: ovW,
+                  height: ovH,
+                  borderRadius: Math.round(overlayBoard.radius * ovScale),
+                  animation: 'atelier-modal-pop 320ms cubic-bezier(0.22, 1, 0.36, 1) both',
                   boxShadow:
-                    style.boxShadow !== 'none' ? style.boxShadow : undefined,
-                  animation: animCss,
-                  cursor: isInteractive ? 'pointer' : 'default',
+                    '0 28px 90px rgba(0, 0, 0, 0.72), 0 0 0 1.5px rgba(99, 102, 241, 0.5)',
+                  overflow: 'hidden',
                 }}
               >
-                <img
-                  src={node.imageSrc}
-                  alt={node.name}
-                  className="w-full h-full pointer-events-none"
+                <div
+                  className="absolute top-0 left-0 overflow-hidden"
                   style={{
-                    objectFit: node.objectFit ?? 'cover',
-                    filter: filterCss,
-                  }}
-                />
-              </div>
-            );
-          }
-
-          if (node.type === 'path' && node.pathData) {
-            const d = buildSvgPathData(
-              node.pathData.points,
-              node.pathData.smooth !== false,
-              Boolean(node.pathData.closed),
-            );
-            const dash =
-              node.pathData.dashStyle === 'dashed'
-                ? '8 6'
-                : node.pathData.dashStyle === 'dotted'
-                  ? '2 6'
-                  : undefined;
-            return (
-              <svg
-                key={node.id}
-                className={`absolute overflow-visible ${hoverClass}`}
-                style={{
-                  left: node.x - activeBoard.x,
-                  top: node.y - activeBoard.y,
-                  width: node.width,
-                  height: node.height,
-                  opacity: node.opacity,
-                  animation: animCss,
-                  filter: node.pathData.glow
-                    ? `drop-shadow(0 0 8px ${style.strokeColor})`
-                    : undefined,
-                }}
-                viewBox={`0 0 ${node.width} ${node.height}`}
-                fill="none"
-              >
-                <path
-                  d={d}
-                  stroke={style.strokeColor}
-                  strokeWidth={Math.max(1.5, node.strokeWidth || 2.5)}
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeDasharray={dash}
-                />
-              </svg>
-            );
-          }
-
-          return (
-            <div
-              key={node.id}
-              data-testid={`proto-node-${node.id}`}
-              onClick={() => handleNodeClick(node)}
-              className={`absolute ${hoverClass} ${isPulsing ? 'proto-pulsing' : ''}`}
-              style={{
-                left: node.x - activeBoard.x,
-                top: node.y - activeBoard.y,
-                width: node.width,
-                height: node.height,
-                transform:
-                  node.rotation !== 0 ? `rotate(${node.rotation}deg)` : undefined,
-                borderRadius: style.radius,
-                opacity: node.opacity,
-                background:
-                  node.type === 'text' ? 'transparent' : style.cssBackground,
-                border:
-                  node.strokeWidth > 0
-                    ? `${node.strokeWidth}px solid ${style.strokeColor}`
-                    : undefined,
-                backdropFilter: node.blur > 0 ? `blur(${node.blur}px)` : undefined,
-                WebkitBackdropFilter:
-                  node.blur > 0 ? `blur(${node.blur}px)` : undefined,
-                boxShadow:
-                  style.boxShadow !== 'none' ? style.boxShadow : undefined,
-                mixBlendMode: node.blendMode,
-                animation: animCss,
-                cursor: isInteractive ? 'pointer' : 'default',
-                display:
-                  node.type === 'button' || node.type === 'text'
-                    ? 'flex'
-                    : undefined,
-                alignItems: node.type === 'button' ? 'center' : 'flex-start',
-                justifyContent:
-                  node.type === 'button'
-                    ? 'center'
-                    : node.textAlign === 'center'
-                      ? 'center'
-                      : node.textAlign === 'right'
-                        ? 'flex-end'
-                        : 'flex-start',
-              }}
-            >
-              {(node.type === 'text' || node.type === 'button') && (
-                <span
-                  className="w-full"
-                  style={{
-                    color: style.textColor,
-                    fontFamily: node.fontFamily ?? 'Inter',
-                    fontWeight: node.fontWeight ?? 500,
-                    fontSize: node.fontSize ?? 14,
-                    letterSpacing: node.letterSpacing ?? 0,
-                    lineHeight: node.lineHeight ?? 1.25,
-                    textAlign: node.textAlign ?? 'left',
-                    whiteSpace: 'pre-wrap',
+                    width: overlayBoard.width,
+                    height: overlayBoard.height,
+                    borderRadius: overlayBoard.radius,
+                    background: ovBg.cssBackground,
+                    transform: `scale(${ovScale})`,
+                    transformOrigin: 'top left',
                   }}
                 >
-                  {node.text}
-                </span>
-              )}
-            </div>
-          );
-        })}
-      </div>
+                  {renderNodesInsideBoard(overlayBoard, ovNodes, true)}
+                </div>
+                <button
+                  type="button"
+                  data-testid="btn-proto-overlay-close"
+                  onClick={() => setOverlayArtboardId(null)}
+                  title="Close Modal Overlay"
+                  className="absolute top-2.5 right-2.5 z-40 w-7 h-7 rounded-full bg-black/70 hover:bg-black/90 border border-white/20 text-white flex items-center justify-center cursor-pointer"
+                >
+                  <X size={13} />
+                </button>
+              </div>
+            );
+          })()}
+        </div>
+      )}
     </div>
   );
 
@@ -359,16 +538,28 @@ export function PrototypePlayerModal({
       }}
     >
       {/* Top Presenter Bar with Multi-Screen Breadcrumb */}
-      <header className="h-14 px-5 border-b border-white/10 flex items-center justify-between gap-4 shrink-0 bg-[#0B0D13]/85 backdrop-blur-md">
-        <div className="flex items-center gap-2.5 min-w-0">
+      <header className="h-14 px-4 sm:px-5 border-b border-white/10 flex items-center justify-between gap-3 shrink-0 bg-[#0B0D13]/85 backdrop-blur-md">
+        <div className="flex items-center gap-2 min-w-0">
+          {(navHistory.length > 0 || overlayBoard) && (
+            <button
+              type="button"
+              data-testid="btn-proto-back"
+              onClick={handleGoBack}
+              className="h-7 px-2 rounded-lg bg-white/10 hover:bg-white/15 border border-white/10 text-xs font-medium flex items-center gap-1 cursor-pointer shrink-0"
+            >
+              <ArrowLeft size={12} />
+              <span className="hidden sm:inline">Back</span>
+            </button>
+          )}
+
           <div className="flex items-center gap-1.5 px-2 py-1 rounded-full bg-emerald-500/15 border border-emerald-500/40 text-emerald-300 font-mono-tech text-[10px] font-semibold shrink-0">
             <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-            <span>LIVE FLOW</span>
+            <span>LIVE PROTOTYPE</span>
           </div>
 
           <div
             data-testid="proto-screen-breadcrumbs"
-            className="flex items-center gap-1 overflow-hidden"
+            className="hidden md:flex items-center gap-1 overflow-hidden"
           >
             {artboards.map((board, idx) => {
               const isCurrent = board.id === activeBoard.id;
@@ -378,7 +569,7 @@ export function PrototypePlayerModal({
                   <button
                     type="button"
                     data-testid={`proto-crumb-${board.id}`}
-                    onClick={() => navigateToScreen(board.id, 'dissolve')}
+                    onClick={() => navigateToScreen(board.id, 'smart-animate')}
                     className="px-2 py-1 rounded-md text-xs font-medium transition-colors cursor-pointer whitespace-nowrap"
                     style={{
                       backgroundColor: isCurrent
@@ -396,12 +587,12 @@ export function PrototypePlayerModal({
         </div>
 
         {/* Device Bezel Switcher */}
-        <div className="flex items-center gap-1 p-1 rounded-xl bg-white/5 border border-white/10 shrink-0">
+        <div className="hidden sm:flex items-center gap-1 p-1 rounded-xl bg-white/5 border border-white/10 shrink-0">
           {(
             [
-              ['studio', 'Floating Studio', Monitor],
-              ['macbook', 'MacBook Pro', Laptop],
-              ['iphone', 'iPhone 16 Pro', Smartphone],
+              ['studio', 'Studio', Monitor],
+              ['macbook', 'MacBook', Laptop],
+              ['iphone', 'iPhone', Smartphone],
             ] as const
           ).map(([id, label, Icon]) => (
             <button
@@ -416,16 +607,38 @@ export function PrototypePlayerModal({
               }}
             >
               <Icon size={13} strokeWidth={1.6} />
-              <span className="hidden sm:inline">{label}</span>
+              <span className="hidden lg:inline">{label}</span>
             </button>
           ))}
         </div>
 
         {/* Right Controls */}
-        <div className="flex items-center gap-2 shrink-0">
-          <div className="hidden lg:flex items-center gap-1 px-2 py-1 rounded-lg bg-white/5 border border-white/10">
+        <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+          {/* Hotspots Visibility Toggle */}
+          <button
+            type="button"
+            data-testid="btn-proto-hotspots"
+            onClick={() => setShowHotspots((v) => !v)}
+            title="Toggle Clickable Hotspot Hints (H)"
+            className="h-8 px-2.5 rounded-lg border text-[11px] font-mono-tech font-semibold flex items-center gap-1.5 cursor-pointer"
+            style={{
+              backgroundColor: showHotspots
+                ? 'rgba(16, 185, 129, 0.16)'
+                : 'rgba(255, 255, 255, 0.06)',
+              borderColor: showHotspots
+                ? 'rgba(16, 185, 129, 0.45)'
+                : 'rgba(255, 255, 255, 0.12)',
+              color: showHotspots ? '#34D399' : '#94A3B8',
+            }}
+          >
+            {showHotspots ? <Eye size={12} /> : <EyeOff size={12} />}
+            <span className="hidden sm:inline">{hotspotCount} Hotspots</span>
+          </button>
+
+          {/* Instant Theme Swatches */}
+          <div className="hidden xl:flex items-center gap-1 px-2 py-1 rounded-lg bg-white/5 border border-white/10">
             <Palette size={12} className="text-slate-400 mr-1" />
-            {BRAND_TOKEN_THEMES.map((theme) => (
+            {FLAGSHIP_V4_THEMES.map((theme) => (
               <button
                 key={theme.id}
                 type="button"
@@ -447,10 +660,10 @@ export function PrototypePlayerModal({
             type="button"
             data-testid="btn-proto-replay"
             onClick={() => setReplayKey((k) => k + 1)}
-            className="h-8 px-3 rounded-lg bg-white/10 hover:bg-white/15 border border-white/10 text-xs font-medium flex items-center gap-1.5 cursor-pointer"
+            className="h-8 px-2.5 rounded-lg bg-white/10 hover:bg-white/15 border border-white/10 text-xs font-medium flex items-center gap-1.5 cursor-pointer"
           >
             <RotateCcw size={12} />
-            <span>Replay (R)</span>
+            <span className="hidden sm:inline">Replay</span>
           </button>
 
           <button
@@ -466,7 +679,7 @@ export function PrototypePlayerModal({
       </header>
 
       {/* Center Device Showcase */}
-      <div className="flex-1 flex items-center justify-center p-6 overflow-hidden">
+      <div className="flex-1 flex items-center justify-center p-4 sm:p-6 overflow-hidden">
         {device === 'macbook' ? (
           <div data-testid="bezel-macbook" className="flex flex-col items-center">
             <div className="p-3.5 pb-4 rounded-t-2xl bg-[#11131A] border-2 border-slate-700/80 shadow-2xl relative">
@@ -508,10 +721,10 @@ export function PrototypePlayerModal({
             <span>{toastMsg}</span>
           </div>
         ) : (
-          <div className="font-mono-tech text-[11px] text-slate-400 flex items-center gap-2">
-            <Zap size={12} className="text-emerald-400" />
+          <div className="font-mono-tech text-[11px] text-slate-400 flex items-center gap-2 text-center">
+            <Zap size={12} className="text-emerald-400 shrink-0" />
             <span>
-              Click Instant Transfer to navigate live to Checkout Screen · Press R to replay
+              Click glowing hotspots (Instant Transfer · Card Controls) for Smart Animate & Modal Overlay · H Hotspots · R Replay
             </span>
           </div>
         )}

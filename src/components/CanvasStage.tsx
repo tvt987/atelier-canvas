@@ -7,13 +7,19 @@ import {
   Code2,
   Copy,
   FileCode2,
+  Grid3X3,
   Layers,
   Lock,
+  Magnet,
   Map as MapIcon,
+  Maximize2,
   Minimize2,
+  Monitor,
   RotateCcw,
   Ruler,
+  Smartphone,
   Sparkles,
+  Tablet,
   Trash2,
   Unlock,
   Upload,
@@ -31,7 +37,13 @@ import type {
   ToolType,
   UiMode,
   Viewport,
+  ViewportBreakpoint,
 } from '../types/canvas';
+import {
+  BREAKPOINT_PRESETS,
+  computeBreakpointColumnRects,
+  getBreakpointPreset,
+} from '../engines/responsive';
 import {
   getRulerTicks,
   screenToCanvas,
@@ -84,6 +96,12 @@ interface CanvasStageProps {
   altPressed: boolean;
   stack3D: boolean;
   onToggleStack3D: () => void;
+  breakpoint: ViewportBreakpoint;
+  onSelectBreakpoint: (bp: ViewportBreakpoint) => void;
+  smartGuidesEnabled: boolean;
+  onToggleSmartGuides: () => void;
+  snapToGrid8px: boolean;
+  onToggleSnapToGrid8px: () => void;
   onLiveUpdateNodes: (nextNodes: CanvasNode[]) => void;
   onCommitNodes: (nextNodes: CanvasNode[]) => void;
   onContextAction: (nodeId: string, action: ContextMenuAction) => void;
@@ -177,6 +195,12 @@ export function CanvasStage({
   altPressed,
   stack3D,
   onToggleStack3D,
+  breakpoint,
+  onSelectBreakpoint,
+  smartGuidesEnabled,
+  onToggleSmartGuides,
+  snapToGrid8px,
+  onToggleSnapToGrid8px,
   onLiveUpdateNodes,
   onCommitNodes,
   onContextAction,
@@ -404,7 +428,11 @@ export function CanvasStage({
                 width: parentBoard.width,
                 height: parentBoard.height,
               },
-              6,
+              {
+                threshold: 6,
+                gridSize: snapToGrid8px ? 8 : 0,
+                smartGuidesEnabled,
+              },
             );
             adjustedDx = snap.x - init.x;
             adjustedDy = snap.y - init.y;
@@ -588,6 +616,8 @@ export function CanvasStage({
     onSelectIds,
     onSelectTool,
     onViewportChange,
+    smartGuidesEnabled,
+    snapToGrid8px,
   ]);
 
   const handlePenClick = (ptCanvas: Point, detail: number) => {
@@ -915,7 +945,9 @@ export function CanvasStage({
     for (const src of doc.nodes) {
       if (!src.visible || !src.prototype) continue;
       if (
-        src.prototype.clickAction === 'navigate_artboard' &&
+        (src.prototype.clickAction === 'navigate_artboard' ||
+          src.prototype.clickAction === 'smart_animate' ||
+          src.prototype.clickAction === 'modal_overlay') &&
         src.prototype.targetArtboardId
       ) {
         const dstBoard = artboards.find(
@@ -923,14 +955,24 @@ export function CanvasStage({
         );
         if (dstBoard) {
           const goingRight = dstBoard.x >= src.x;
+          const isModal = src.prototype.clickAction === 'modal_overlay';
+          const isSmart =
+            src.prototype.clickAction === 'smart_animate' ||
+            src.prototype.transition === 'smart-animate';
           connectors.push({
             id: `nav-${src.id}->${dstBoard.id}`,
             x1: goingRight ? src.x + src.width : src.x,
             y1: src.y + src.height / 2,
             x2: goingRight ? dstBoard.x : dstBoard.x + dstBoard.width,
-            y2: goingRight ? dstBoard.y + dstBoard.height * 0.38 : dstBoard.y + 52,
-            label: src.prototype.transition ?? 'slide-left',
-            color: '#10B981',
+            y2: goingRight
+              ? dstBoard.y + dstBoard.height * (isModal ? 0.68 : 0.36)
+              : dstBoard.y + 52,
+            label: isModal
+              ? 'Modal Overlay'
+              : isSmart
+                ? 'Smart Animate'
+                : (src.prototype.transition ?? 'Navigate To'),
+            color: isModal ? '#A78BFA' : isSmart ? '#06B6D4' : '#10B981',
           });
         }
       } else if (
@@ -1352,6 +1394,88 @@ export function CanvasStage({
         backgroundPosition: `${viewport.x}px ${viewport.y}px`,
       }}
     >
+      {/* Top-Left Floating Responsive Breakpoint & Grid HUD */}
+      <div
+        data-testid="responsive-viewport-toolbar"
+        onPointerDown={(e) => e.stopPropagation()}
+        className="hidden sm:flex absolute top-8 left-8 z-30 items-center gap-1 p-0.5 rounded-lg border backdrop-blur-md shadow-lg"
+        style={{
+          backgroundColor: 'color-mix(in srgb, var(--studio-surface) 92%, transparent)',
+          borderColor: 'var(--studio-border-strong)',
+        }}
+      >
+        {BREAKPOINT_PRESETS.map((bp) => {
+          const isActive = breakpoint === bp.id;
+          const Icon =
+            bp.id === 'desktop'
+              ? Monitor
+              : bp.id === 'tablet'
+                ? Tablet
+                : bp.id === 'mobile'
+                  ? Smartphone
+                  : Maximize2;
+          return (
+            <button
+              key={bp.id}
+              type="button"
+              data-testid={`bp-${bp.id}`}
+              onClick={() => onSelectBreakpoint(bp.id)}
+              title={bp.description}
+              className="h-6 px-2 rounded-md font-mono-tech text-[10px] font-semibold flex items-center gap-1 transition-all cursor-pointer"
+              style={{
+                backgroundColor: isActive ? 'var(--studio-accent)' : 'transparent',
+                color: isActive ? '#FFFFFF' : 'var(--studio-text-secondary)',
+              }}
+            >
+              <Icon size={11} strokeWidth={1.7} />
+              <span className="hidden 2xl:inline">{bp.label}</span>
+              <span className="2xl:hidden">
+                {bp.width ? `${bp.width}px` : 'Fluid'}
+              </span>
+            </button>
+          );
+        })}
+
+        <div
+          className="w-px h-3.5 mx-0.5"
+          style={{ backgroundColor: 'var(--studio-border-strong)' }}
+        />
+
+        <button
+          type="button"
+          data-testid="btn-toggle-smart-guides"
+          onClick={onToggleSmartGuides}
+          title="Toggle Visual Smart Snap Guides"
+          className="h-6 px-2 rounded-md font-mono-tech text-[10px] font-semibold flex items-center gap-1 transition-all cursor-pointer"
+          style={{
+            backgroundColor: smartGuidesEnabled
+              ? 'rgba(244, 63, 94, 0.18)'
+              : 'transparent',
+            color: smartGuidesEnabled ? '#FB7185' : 'var(--studio-text-muted)',
+          }}
+        >
+          <Magnet size={11} strokeWidth={1.7} />
+          <span className="hidden xl:inline">{labels.smartGuidesBtn}</span>
+        </button>
+
+        <button
+          type="button"
+          data-testid="btn-toggle-grid-8px"
+          onClick={onToggleSnapToGrid8px}
+          title="Toggle Snap-to-8px Baseline Grid"
+          className="h-6 px-2 rounded-md font-mono-tech text-[10px] font-semibold flex items-center gap-1 transition-all cursor-pointer"
+          style={{
+            backgroundColor: snapToGrid8px
+              ? 'rgba(6, 182, 212, 0.2)'
+              : 'transparent',
+            color: snapToGrid8px ? 'var(--studio-cyan)' : 'var(--studio-text-muted)',
+          }}
+        >
+          <Grid3X3 size={11} strokeWidth={1.7} />
+          <span className="hidden xl:inline">{labels.grid8pxBtn}</span>
+        </button>
+      </div>
+
       {/* Top-Right Floating Canvas HUD: Measure + 3D Stack */}
       <div
         onPointerDown={(e) => e.stopPropagation()}
@@ -1688,6 +1812,45 @@ export function CanvasStage({
                         : '0 24px 72px rgba(0, 0, 0, 0.42), 0 0 0 1px rgba(255,255,255,0.08)',
                     }}
                   >
+                    {/* Visual 8px Baseline Micro-Grid Overlay */}
+                    {snapToGrid8px && (
+                      <div
+                        data-testid="artboard-8px-grid"
+                        className="absolute inset-0 pointer-events-none z-10"
+                        style={{
+                          backgroundImage:
+                            'linear-gradient(to right, rgba(6,182,212,0.12) 1px, transparent 1px), linear-gradient(to bottom, rgba(6,182,212,0.12) 1px, transparent 1px)',
+                          backgroundSize: '8px 8px',
+                        }}
+                      />
+                    )}
+
+                    {/* Visual Responsive Breakpoint Column Guide Overlay */}
+                    {isPrimaryActive && breakpoint !== 'fluid' && (() => {
+                      const preset = getBreakpointPreset(breakpoint);
+                      const cols = computeBreakpointColumnRects(board.width, preset);
+                      return (
+                        <div
+                          data-testid="responsive-column-overlay"
+                          className="absolute inset-0 pointer-events-none z-10"
+                        >
+                          {cols.map((col) => (
+                            <div
+                              key={`col-${col.index}`}
+                              className="absolute top-0 bottom-0"
+                              style={{
+                                left: col.x,
+                                width: col.width,
+                                backgroundColor: 'rgba(99, 102, 241, 0.065)',
+                                borderLeft: '1px solid rgba(99, 102, 241, 0.18)',
+                                borderRight: '1px solid rgba(99, 102, 241, 0.18)',
+                              }}
+                            />
+                          ))}
+                        </div>
+                      );
+                    })()}
+
                     {boardNodes.map((node) =>
                       renderNodeElement(node, board.x, board.y, false, 0),
                     )}
@@ -1782,11 +1945,15 @@ export function CanvasStage({
                   .map((node) => {
                     const p = node.prototype!;
                     const badgeText =
-                      p.clickAction === 'navigate_artboard'
-                        ? `Screen -> ${p.transition ?? 'slide'}`
-                        : p.clickAction !== 'none'
-                          ? `Click · ${p.clickAction}`
-                          : `${p.entrance} · ${p.durationMs}ms`;
+                      p.clickAction === 'modal_overlay'
+                        ? 'Modal Overlay'
+                        : p.clickAction === 'smart_animate'
+                          ? 'Smart Animate'
+                          : p.clickAction === 'navigate_artboard'
+                            ? `Navigate -> ${p.transition ?? 'smart-animate'}`
+                            : p.clickAction !== 'none'
+                              ? `Click · ${p.clickAction}`
+                              : `${p.entrance} · ${p.durationMs}ms`;
                     return (
                       <div
                         key={`pbadge-${node.id}`}
@@ -1796,7 +1963,13 @@ export function CanvasStage({
                           top: node.y - 18 / viewport.zoom,
                           fontSize: `${8.5 / viewport.zoom}px`,
                           backgroundColor:
-                            p.clickAction !== 'none' ? '#34D399' : '#38BDF8',
+                            p.clickAction === 'modal_overlay'
+                              ? '#C4B5FD'
+                              : p.clickAction === 'smart_animate'
+                                ? '#22D3EE'
+                                : p.clickAction !== 'none'
+                                  ? '#34D399'
+                                  : '#38BDF8',
                         }}
                       >
                         <Zap size={Math.max(8, 9 / viewport.zoom)} strokeWidth={2.2} />

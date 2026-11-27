@@ -83,12 +83,20 @@ export interface ImageFilterConfig {
   blur: number;
 }
 
+export type AutoLayoutMode = 'flex' | 'grid';
+export type AutoLayoutAlign = 'start' | 'center' | 'end' | 'stretch';
+export type AutoLayoutJustify = 'start' | 'center' | 'end' | 'between';
+
 export interface AutoLayoutConfig {
   enabled: boolean;
+  layoutMode?: AutoLayoutMode;
   direction: 'row' | 'column';
+  columns?: number;
   gap: number;
   padding: number;
-  align: 'start' | 'center' | 'end';
+  align: AutoLayoutAlign;
+  justify?: AutoLayoutJustify;
+  wrap?: boolean;
 }
 
 export type EntranceAnimation =
@@ -102,7 +110,12 @@ export type EntranceAnimation =
 
 export type EasingPreset = 'spring' | 'expo-out' | 'smooth';
 export type HoverEffect = 'none' | 'lift-glow' | 'scale' | 'glass-tilt';
-export type ScreenTransition = 'slide-left' | 'dissolve' | 'spring-scale';
+export type ScreenTransition =
+  | 'slide-left'
+  | 'dissolve'
+  | 'spring-scale'
+  | 'smart-animate'
+  | 'modal-overlay';
 
 export type ClickAction =
   | 'none'
@@ -110,7 +123,9 @@ export type ClickAction =
   | 'pulse-target'
   | 'switch-template'
   | 'toggle-theme'
-  | 'navigate_artboard';
+  | 'navigate_artboard'
+  | 'smart_animate'
+  | 'modal_overlay';
 
 export interface PrototypeConfig {
   entrance: EntranceAnimation;
@@ -170,11 +185,66 @@ export interface Artboard {
   height: number;
   radius: number;
   background: FillConfig;
+  autoLayout?: AutoLayoutConfig;
   tokenBinding?: {
     fill?: ColorTokenKey;
     fillGradientFrom?: ColorTokenKey;
     fillGradientTo?: ColorTokenKey;
   };
+}
+
+export type TypographyScaleKey = 'display' | 'h1' | 'h2' | 'h3' | 'body' | 'caption' | 'mono';
+
+export interface TypographyScaleToken {
+  fontFamily: string;
+  fontSize: number;
+  fontWeight: number;
+  lineHeight: number;
+  letterSpacing: number;
+}
+
+export interface SpacingGridTokens {
+  unit: number;
+  xs: number;
+  sm: number;
+  md: number;
+  lg: number;
+  xl: number;
+  '2xl': number;
+  '3xl': number;
+}
+
+export interface RadiusScaleTokens {
+  none: number;
+  sm: number;
+  md: number;
+  lg: number;
+  xl: number;
+  full: number;
+}
+
+export interface ShadowElevationTokens {
+  none: string;
+  subtle: string;
+  elevated: string;
+  floating: string;
+  neon: string;
+}
+
+export interface ColorPrimitivePalette {
+  brand500: string;
+  brand600: string;
+  accent400: string;
+  accent500: string;
+  neutral50: string;
+  neutral200: string;
+  neutral500: string;
+  neutral800: string;
+  neutral900: string;
+  neutral950: string;
+  success500: string;
+  warning500: string;
+  danger500: string;
 }
 
 export interface DesignTokens {
@@ -190,6 +260,15 @@ export interface DesignTokens {
   textPrimary: string;
   textMuted: string;
   radiusBase: number;
+  spacingUnit?: number;
+  fontDisplay?: string;
+  fontBody?: string;
+  fontMono?: string;
+  primitives?: ColorPrimitivePalette;
+  typographyScale?: Record<TypographyScaleKey, TypographyScaleToken>;
+  spacingGrid?: SpacingGridTokens;
+  radii?: RadiusScaleTokens;
+  shadows?: ShadowElevationTokens;
 }
 
 export interface DocumentState {
@@ -202,7 +281,7 @@ export interface DocumentState {
 
 export interface AtelierProjectFile {
   format: 'atelier-canvas-project';
-  version: '3.0';
+  version: '3.0' | '4.0';
   exportedAt: string;
   document: DocumentState;
 }
@@ -248,8 +327,9 @@ export type ChromeTheme = 'dark' | 'light';
 export type Locale = 'en' | 'vi';
 export type InspectorTab = 'design' | 'tokens';
 export type LeftRailTab = 'layers' | 'assets';
-export type CodeFormat = 'react-tailwind' | 'css' | 'tokens-json';
+export type CodeFormat = 'react-tailwind' | 'css' | 'svg' | 'tokens-json';
 export type DeviceFrameMode = 'studio' | 'macbook' | 'iphone';
+export type ViewportBreakpoint = 'fluid' | 'desktop' | 'tablet' | 'mobile';
 
 export interface CollaboratorCursor {
   id: string;

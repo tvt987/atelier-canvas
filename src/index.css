@@ -248,3 +248,48 @@ input[type='number'].no-spin {
 .proto-pulsing {
   animation: atelier-pulse-ring 900ms cubic-bezier(0.16, 1, 0.3, 1) 2 !important;
 }
+
+@keyframes atelier-smart-animate {
+  0% {
+    opacity: 0.2;
+    transform: scale(0.96) translate3d(18px, 0, 0);
+    filter: blur(4px);
+  }
+  65% {
+    opacity: 1;
+    transform: scale(1.01) translate3d(-2px, 0, 0);
+    filter: blur(0px);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1) translate3d(0, 0, 0);
+    filter: blur(0px);
+  }
+}
+
+@keyframes atelier-modal-pop {
+  0% {
+    opacity: 0;
+    transform: scale(0.9) translate3d(0, 20px, 0);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1) translate3d(0, 0, 0);
+  }
+}
+
+@keyframes atelier-hotspot-beacon {
+  0% {
+    box-shadow: 0 0 0 0 rgba(52, 211, 153, 0.72);
+  }
+  70% {
+    box-shadow: 0 0 0 9px rgba(52, 211, 153, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(52, 211, 153, 0);
+  }
+}
+
+.proto-hotspot-ring {
+  animation: atelier-hotspot-beacon 1.9s cubic-bezier(0.16, 1, 0.3, 1) infinite;
+}

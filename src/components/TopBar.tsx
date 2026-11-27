@@ -17,6 +17,8 @@ import {
   RefreshCw,
   RotateCcw,
   Save,
+  ShieldCheck,
+  SlidersHorizontal,
   Sparkles,
   Sun,
   Undo2,
@@ -32,6 +34,9 @@ interface TopBarProps {
   uiMode: UiMode;
   onSetUiMode: (mode: UiMode) => void;
   onOpenPrototypePlayer: () => void;
+  onOpenEnterpriseModal: () => void;
+  mobileInspectorOpen: boolean;
+  onToggleMobileInspector: () => void;
   snapshots: DesignSnapshot[];
   onSaveSnapshot: (label?: string) => void;
   onRestoreSnapshot: (snapshotId: string) => void;
@@ -66,6 +71,9 @@ export function TopBar({
   uiMode,
   onSetUiMode,
   onOpenPrototypePlayer,
+  onOpenEnterpriseModal,
+  mobileInspectorOpen,
+  onToggleMobileInspector,
   snapshots,
   onSaveSnapshot,
   onRestoreSnapshot,
@@ -118,7 +126,7 @@ export function TopBar({
 
   return (
     <header
-      className="h-12 shrink-0 flex items-center justify-between gap-2 px-2.5 border-b select-none z-40"
+      className="h-12 shrink-0 flex items-center justify-between gap-1 sm:gap-2 px-1.5 sm:px-2.5 border-b select-none z-40"
       style={{
         backgroundColor: 'var(--studio-surface)',
         borderColor: 'var(--studio-border)',
@@ -138,9 +146,9 @@ export function TopBar({
       />
 
       {/* Left: Brand Identity + Template Selector + Undo/Redo + File/History */}
-      <div className="flex items-center gap-1.5 min-w-0">
+      <div className="flex items-center gap-1 sm:gap-1.5 min-w-0">
         <div
-          className="flex items-center gap-2 pr-2 border-r shrink-0"
+          className="flex items-center gap-2 sm:pr-2 sm:border-r shrink-0"
           style={{ borderColor: 'var(--studio-border)' }}
         >
           <div
@@ -167,14 +175,15 @@ export function TopBar({
               ATELIER
             </span>
             <span
-              className="font-mono-tech text-[9px] font-semibold px-1 py-0.5 rounded border"
+              data-testid="studio-version-badge"
+              className="font-mono-tech text-[9px] font-semibold px-1.5 py-0.5 rounded border"
               style={{
                 color: 'var(--studio-cyan)',
-                borderColor: 'var(--studio-border-strong)',
-                backgroundColor: 'var(--studio-surface-2)',
+                borderColor: 'rgba(6, 182, 212, 0.4)',
+                backgroundColor: 'rgba(6, 182, 212, 0.1)',
               }}
             >
-              v3
+              v4.0 PRO
             </span>
           </div>
         </div>
@@ -185,7 +194,7 @@ export function TopBar({
             type="button"
             data-testid="template-switcher"
             onClick={() => setTemplateMenuOpen((v) => !v)}
-            className="h-8 px-2 rounded-md border flex items-center gap-1.5 text-[11px] font-medium transition-colors cursor-pointer"
+            className="h-8 px-1.5 sm:px-2 rounded-md border flex items-center gap-1 sm:gap-1.5 text-[11px] font-medium transition-colors cursor-pointer"
             style={{
               backgroundColor: 'var(--studio-surface-2)',
               borderColor: templateMenuOpen ? 'var(--studio-accent)' : 'var(--studio-border)',
@@ -198,7 +207,10 @@ export function TopBar({
                 background: `linear-gradient(135deg, ${activeTemplate.accentSwatch[0]}, ${activeTemplate.accentSwatch[1]})`,
               }}
             />
-            <span className="truncate max-w-[110px] xl:max-w-[165px]">
+            <span className="font-mono-tech sm:hidden text-[10px] font-semibold">
+              {activeTemplate.code}
+            </span>
+            <span className="hidden sm:inline truncate max-w-[110px] xl:max-w-[155px]">
               {activeTemplate.code}. {activeTemplate.name}
             </span>
             <ChevronDown size={12} strokeWidth={1.5} style={{ color: 'var(--studio-text-muted)' }} />
@@ -300,7 +312,7 @@ export function TopBar({
             data-testid="btn-snapshots"
             onClick={() => setSnapshotsOpen((v) => !v)}
             title="Project File (.atelier.json) & Design Version Snapshots"
-            className="h-7 px-2 rounded-md border flex items-center gap-1.5 text-[10px] font-mono-tech transition-colors cursor-pointer"
+            className="h-7 px-2 rounded-md border flex items-center gap-1.5 text-[10px] font-mono-tech whitespace-nowrap shrink-0 transition-colors cursor-pointer"
             style={{
               backgroundColor: snapshotsOpen
                 ? 'var(--studio-accent-soft)'
@@ -480,8 +492,8 @@ export function TopBar({
         </div>
       </div>
 
-      {/* Center: 3-Mode Switcher + Present + Zoom */}
-      <div className="flex items-center gap-1.5">
+      {/* Center: 3-Mode Switcher + Present Prototype + Zoom */}
+      <div className="flex items-center gap-1 sm:gap-1.5 shrink-0">
         <div
           className="h-8 p-0.5 rounded-lg border flex items-center gap-0.5"
           style={{
@@ -494,42 +506,42 @@ export function TopBar({
             data-testid="mode-design"
             onClick={() => onSetUiMode('design')}
             title="Design Mode (Shift+1)"
-            className="h-full px-2 rounded-md text-[10px] font-mono-tech font-semibold tracking-wider flex items-center gap-1 transition-all cursor-pointer"
+            className="h-full px-1.5 sm:px-2 rounded-md text-[10px] font-mono-tech font-semibold tracking-wider flex items-center gap-1 transition-all cursor-pointer"
             style={{
               backgroundColor: uiMode === 'design' ? 'var(--studio-accent)' : 'transparent',
               color: uiMode === 'design' ? '#FFFFFF' : 'var(--studio-text-secondary)',
             }}
           >
             <PenTool size={11} strokeWidth={1.7} />
-            <span>{labels.designMode}</span>
+            <span className="hidden sm:inline">{labels.designMode}</span>
           </button>
           <button
             type="button"
             data-testid="mode-prototype"
             onClick={() => onSetUiMode('prototype')}
             title="Prototype & Multi-Screen Flows (Shift+2)"
-            className="h-full px-2 rounded-md text-[10px] font-mono-tech font-semibold tracking-wider flex items-center gap-1 transition-all cursor-pointer"
+            className="h-full px-1.5 sm:px-2 rounded-md text-[10px] font-mono-tech font-semibold tracking-wider flex items-center gap-1 transition-all cursor-pointer"
             style={{
               backgroundColor: uiMode === 'prototype' ? '#059669' : 'transparent',
               color: uiMode === 'prototype' ? '#FFFFFF' : 'var(--studio-text-secondary)',
             }}
           >
             <Sparkles size={11} strokeWidth={1.7} />
-            <span>{labels.prototypeMode}</span>
+            <span className="hidden sm:inline">{labels.prototypeMode}</span>
           </button>
           <button
             type="button"
             data-testid="mode-dev"
             onClick={() => onSetUiMode('dev')}
             title="Dev Mode & Codegen (Shift+3)"
-            className="h-full px-2 rounded-md text-[10px] font-mono-tech font-semibold tracking-wider flex items-center gap-1 transition-all cursor-pointer"
+            className="h-full px-1.5 sm:px-2 rounded-md text-[10px] font-mono-tech font-semibold tracking-wider flex items-center gap-1 transition-all cursor-pointer"
             style={{
               backgroundColor: uiMode === 'dev' ? '#0891B2' : 'transparent',
               color: uiMode === 'dev' ? '#FFFFFF' : 'var(--studio-text-secondary)',
             }}
           >
             <Code2 size={11} strokeWidth={1.7} />
-            <span>{labels.devMode}</span>
+            <span className="hidden sm:inline">{labels.devMode}</span>
           </button>
         </div>
 
@@ -537,8 +549,8 @@ export function TopBar({
           type="button"
           data-testid="btn-present"
           onClick={onOpenPrototypePlayer}
-          title="Launch Fullscreen Interactive Multi-Screen Prototype"
-          className="h-8 px-2.5 rounded-lg border text-[11px] font-semibold flex items-center gap-1.5 transition-all cursor-pointer shrink-0"
+          title="Present Prototype — Interactive Click-Through Player"
+          className="h-8 px-2 sm:px-2.5 rounded-lg border text-[11px] font-semibold flex items-center gap-1.5 transition-all cursor-pointer shrink-0"
           style={{
             background:
               'linear-gradient(135deg, rgba(16,185,129,0.22), rgba(6,182,212,0.18))',
@@ -547,7 +559,7 @@ export function TopBar({
           }}
         >
           <Play size={11} fill="currentColor" strokeWidth={1.6} />
-          <span className="hidden sm:inline">{labels.presentBtn}</span>
+          <span className="hidden md:inline">{labels.presentBtn}</span>
         </button>
 
         <div
@@ -598,14 +610,31 @@ export function TopBar({
         </div>
       </div>
 
-      {/* Right: Presence, CMD+K, Locale, Theme, Export */}
-      <div className="flex items-center gap-1">
+      {/* Right: Enterprise License, Presence, CMD+K, Locale, Theme, Mobile Inspector, Export */}
+      <div className="flex items-center gap-1 shrink-0">
+        <button
+          type="button"
+          data-testid="btn-enterprise-license"
+          onClick={onOpenEnterpriseModal}
+          title="Enterprise Super VIP Pro License · 13.900.000 VND (MBBank VietQR)"
+          className="hidden sm:flex h-8 px-2 rounded-lg border items-center gap-1.5 text-[10px] font-mono-tech font-semibold transition-all cursor-pointer shrink-0"
+          style={{
+            background:
+              'linear-gradient(135deg, rgba(245,158,11,0.16), rgba(99,102,241,0.16))',
+            borderColor: 'rgba(245,158,11,0.45)',
+            color: '#FBBF24',
+          }}
+        >
+          <ShieldCheck size={12} strokeWidth={1.8} />
+          <span className="hidden lg:inline">{labels.enterpriseBtn}</span>
+        </button>
+
         <button
           type="button"
           data-testid="btn-co-designer"
           onClick={onToggleCoDesigner}
           title={`Yjs CRDT (${crdtRevisions} ops) — Simulate Co-Designer`}
-          className="w-8 h-8 rounded-lg border flex items-center justify-center transition-colors cursor-pointer"
+          className="hidden sm:flex w-8 h-8 rounded-lg border items-center justify-center transition-colors cursor-pointer"
           style={{
             backgroundColor: coDesignerActive
               ? 'rgba(6, 182, 212, 0.14)'
@@ -624,7 +653,7 @@ export function TopBar({
           data-testid="btn-cmdk"
           onClick={onOpenCommandBar}
           title="AI Command Palette (Ctrl+K)"
-          className="h-8 px-2 rounded-lg border flex items-center gap-1 text-[10px] font-mono-tech transition-colors cursor-pointer"
+          className="hidden sm:flex h-8 px-2 rounded-lg border items-center gap-1 text-[10px] font-mono-tech transition-colors cursor-pointer"
           style={{
             backgroundColor: 'var(--studio-surface-2)',
             borderColor: 'var(--studio-border)',
@@ -632,7 +661,7 @@ export function TopBar({
           }}
         >
           <Command size={12} strokeWidth={1.5} />
-          <span className="hidden sm:inline">K</span>
+          <span className="hidden md:inline">K</span>
         </button>
 
         <button
@@ -640,7 +669,7 @@ export function TopBar({
           data-testid="btn-locale"
           onClick={onToggleLocale}
           title="Switch UI Language (EN / VI)"
-          className="h-8 px-2 rounded-lg border font-mono-tech text-[10px] font-semibold tracking-wider cursor-pointer"
+          className="h-8 px-1.5 sm:px-2 rounded-lg border font-mono-tech text-[10px] font-semibold tracking-wider cursor-pointer"
           style={{
             backgroundColor: 'var(--studio-surface-2)',
             borderColor: 'var(--studio-border)',
@@ -671,16 +700,37 @@ export function TopBar({
 
         <button
           type="button"
+          data-testid="btn-mobile-inspector"
+          onClick={onToggleMobileInspector}
+          title="Toggle Inspector Panel"
+          className="flex md:hidden w-8 h-8 rounded-lg border items-center justify-center cursor-pointer"
+          style={{
+            backgroundColor: mobileInspectorOpen
+              ? 'var(--studio-accent-soft)'
+              : 'var(--studio-surface-2)',
+            borderColor: mobileInspectorOpen
+              ? 'var(--studio-accent)'
+              : 'var(--studio-border)',
+            color: mobileInspectorOpen
+              ? 'var(--studio-accent)'
+              : 'var(--studio-text-secondary)',
+          }}
+        >
+          <SlidersHorizontal size={13} strokeWidth={1.6} />
+        </button>
+
+        <button
+          type="button"
           data-testid="btn-export-open"
           onClick={onOpenExportModal}
-          className="h-8 px-2.5 rounded-lg text-[11px] font-semibold text-white flex items-center gap-1.5 transition-opacity hover:opacity-95 cursor-pointer shrink-0"
+          className="h-8 px-2 sm:px-2.5 rounded-lg text-[11px] font-semibold text-white flex items-center gap-1.5 transition-opacity hover:opacity-95 cursor-pointer shrink-0"
           style={{
             background: 'linear-gradient(135deg, #6366F1, #4F46E5)',
             boxShadow: '0 2px 12px rgba(99, 102, 241, 0.35)',
           }}
         >
           <Download size={12} strokeWidth={1.8} />
-          <span>{labels.exportBtn}</span>
+          <span className="hidden sm:inline">{labels.exportBtn}</span>
         </button>
       </div>
     </header>

@@ -71,6 +71,27 @@ export const COMMAND_CATALOG: CommandItem[] = [
     shortcut: 'Shift+3',
   },
   {
+    id: 'theme-obsidian-pro',
+    title: 'Switch to Obsidian Pro Theme',
+    subtitle: 'Morph all token-bound layers to Obsidian Pro indigo & cyan',
+    category: 'theme',
+    keywords: ['obsidian', 'pro', 'indigo', 'dark', 'theme', 'tokens'],
+  },
+  {
+    id: 'theme-swiss-editorial-light',
+    title: 'Switch to Swiss Editorial Light Theme',
+    subtitle: 'Morph all token-bound layers to architectural ivory & vermilion',
+    category: 'theme',
+    keywords: ['swiss', 'editorial', 'light', 'vermilion', 'theme', 'tokens'],
+  },
+  {
+    id: 'theme-cyber-emerald',
+    title: 'Switch to Cyber Emerald Theme',
+    subtitle: 'Morph canvas to stealth jade & luminous emerald matrix tokens',
+    category: 'theme',
+    keywords: ['cyber', 'emerald', 'green', 'matrix', 'theme', 'tokens'],
+  },
+  {
     id: 'theme-swiss-vermilion',
     title: 'Switch to Swiss Vermilion Theme',
     subtitle: 'Morph all token-bound layers to Vermilion & Amber',
@@ -97,6 +118,20 @@ export const COMMAND_CATALOG: CommandItem[] = [
     subtitle: 'Morph canvas to Cobalt, Acid Lime & crisp 4px geometry',
     category: 'theme',
     keywords: ['tokyo', 'bauhaus', 'cobalt', 'lime', 'theme'],
+  },
+  {
+    id: 'enterprise-license',
+    title: 'Enterprise Super VIP Pro License (MBBank VietQR)',
+    subtitle: 'Unlock full commercial studio license — 13.900.000 VND',
+    category: 'export',
+    keywords: ['enterprise', 'license', 'pro', 'vietqr', 'mbbank', 'billing', 'upgrade'],
+  },
+  {
+    id: 'layout-toggle-grid-8px',
+    title: 'Toggle 8px Snap Grid',
+    subtitle: 'Enable or disable exact 8px baseline snapping & micro-grid',
+    category: 'layout',
+    keywords: ['grid', '8px', 'snap', 'baseline', 'layout'],
   },
   {
     id: 'layout-center-selected',
@@ -255,6 +290,12 @@ export function createGeneratedNodesForCommand(
 
 export function resolveThemeCommand(commandId: string) {
   switch (commandId) {
+    case 'theme-obsidian-pro':
+      return getTokenThemeById('obsidian-pro');
+    case 'theme-swiss-editorial-light':
+      return getTokenThemeById('swiss-editorial-light');
+    case 'theme-cyber-emerald':
+      return getTokenThemeById('cyber-emerald');
     case 'theme-swiss-vermilion':
       return getTokenThemeById('swiss-vermilion');
     case 'theme-obsidian-electric':

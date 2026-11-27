@@ -5,7 +5,7 @@ import type {
   DocumentState,
 } from '../types/canvas';
 
-export const WORKSPACE_STORAGE_KEY = 'atelier-canvas-workspace-v3';
+export const WORKSPACE_STORAGE_KEY = 'atelier-canvas-workspace-v4';
 
 export function getDocumentArtboards(doc: DocumentState): Artboard[] {
   if (doc.artboards && doc.artboards.length > 0) {
@@ -25,7 +25,7 @@ export function getNodesForArtboard(
 export function serializeProjectFile(doc: DocumentState): string {
   const payload: AtelierProjectFile = {
     format: 'atelier-canvas-project',
-    version: '3.0',
+    version: '4.0',
     exportedAt: new Date().toISOString(),
     document: doc,
   };
