@@ -203,7 +203,7 @@ export function TopBar({
                 backgroundColor: 'rgba(6, 182, 212, 0.1)',
               }}
             >
-              v6.0
+              v7.0
             </span>
           </div>
         </div>

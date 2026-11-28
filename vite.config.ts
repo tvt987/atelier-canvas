@@ -24,6 +24,15 @@ export default defineConfig({
           if (id.includes('componentVariantEngine')) {
             return 'variant-matrix-engine';
           }
+          if (id.includes('shaderStudioEngine')) {
+            return 'shader-studio-engine';
+          }
+          if (
+            id.includes('ProceduralShaderCanvas') ||
+            id.includes('ShaderStudioBar')
+          ) {
+            return 'shader-studio-ui';
+          }
           if (id.includes('/src/engines/') || id.includes('\\src\\engines\\')) {
             return 'engines';
           }
@@ -31,7 +40,11 @@ export default defineConfig({
             id.includes('/src/components/InspectorPanel') ||
             id.includes('\\src\\components\\InspectorPanel') ||
             id.includes('/src/components/LayersPanel') ||
-            id.includes('\\src\\components\\LayersPanel')
+            id.includes('\\src\\components\\LayersPanel') ||
+            id.includes('/src/components/TopBar') ||
+            id.includes('\\src\\components\\TopBar') ||
+            id.includes('/src/components/ToolDock') ||
+            id.includes('\\src\\components\\ToolDock')
           ) {
             return 'studio-panels';
           }

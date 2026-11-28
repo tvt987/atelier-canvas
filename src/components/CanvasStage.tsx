@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowDownToLine,
   ArrowUpToLine,
   Box,
   Check,
   Code2,
+  Compass,
   Copy,
   FileCode2,
   Grid3X3,
@@ -69,7 +70,30 @@ import {
   getDocumentArtboards,
   getNodesForArtboard,
 } from '../engines/projectStorage';
+import {
+  computeInteractiveStateStyle,
+  computePointer3DTilt,
+  computeStrataAltitudes,
+  computeZStackGeometry,
+  getShaderPresetById,
+  type SandboxInteractiveState,
+  type ShaderPaletteId,
+  type ShaderPresetId,
+  type ShaderStudioConfig,
+  type ZStackLayerGeometry,
+} from '../engines/shaderStudioEngine';
+import {
+  ProceduralShaderCanvas,
+  type ShaderRendererBackend,
+} from './ProceduralShaderCanvas';
+import { ShaderStudioBar } from './ShaderStudioBar';
 import type { StudioLabels } from '../i18n/labels';
+
+const LazyLiveCodeSandboxDrawer = lazy(() =>
+  import('./LiveCodeSandboxDrawer').then((m) => ({
+    default: m.LiveCodeSandboxDrawer,
+  })),
+);
 
 type ResizeHandle = 'nw' | 'n' | 'ne' | 'e' | 'se' | 's' | 'sw' | 'w';
 
@@ -101,6 +125,24 @@ interface CanvasStageProps {
   onToggleCanvasBackdrop: () => void;
   stack3D: boolean;
   onToggleStack3D: () => void;
+  shaderConfig: ShaderStudioConfig;
+  onUpdateShaderConfig: (patch: Partial<ShaderStudioConfig>) => void;
+  onSelectShaderPreset: (preset: ShaderPresetId) => void;
+  onSelectShaderPalette: (paletteId: ShaderPaletteId) => void;
+  sandboxOpen: boolean;
+  onToggleSandbox: () => void;
+  codeDrawerOpen: boolean;
+  onToggleCodeDrawer: () => void;
+  onCloseSandboxDrawer: () => void;
+  sandboxState: SandboxInteractiveState;
+  onSelectSandboxState: (state: SandboxInteractiveState) => void;
+  onRepairWcagAAA: () => void;
+  wcagRepairSummary: {
+    repairedCount: number;
+    passingAAAAfter: number;
+    totalAudited: number;
+    minRatioAfter: number;
+  } | null;
   breakpoint: ViewportBreakpoint;
   onSelectBreakpoint: (bp: ViewportBreakpoint) => void;
   smartGuidesEnabled: boolean;
@@ -204,6 +246,19 @@ export function CanvasStage({
   onToggleCanvasBackdrop,
   stack3D,
   onToggleStack3D,
+  shaderConfig,
+  onUpdateShaderConfig,
+  onSelectShaderPreset,
+  onSelectShaderPalette,
+  sandboxOpen,
+  onToggleSandbox,
+  codeDrawerOpen,
+  onToggleCodeDrawer,
+  onCloseSandboxDrawer,
+  sandboxState,
+  onSelectSandboxState,
+  onRepairWcagAAA,
+  wcagRepairSummary,
   breakpoint,
   onSelectBreakpoint,
   smartGuidesEnabled,
@@ -234,10 +289,20 @@ export function CanvasStage({
   const [minimapOpen, setMinimapOpen] = useState(true);
   const [measureToggle, setMeasureToggle] = useState(false);
   const [isDragOverFile, setIsDragOverFile] = useState(false);
-  const [pitch3D, setPitch3D] = useState(48);
+  const [pitch3D, setPitch3D] = useState(46);
   const [yaw3D, setYaw3D] = useState(-24);
-  const [spread3D, setSpread3D] = useState(14);
-  const [hovered3DLayer, setHovered3DLayer] = useState<string | null>(null);
+  const [explodePercent, setExplodePercent] = useState(80);
+  const [pointerTiltEnabled, setPointerTiltEnabled] = useState(true);
+  const [pointer3DNorm, setPointer3DNorm] = useState<Point>({ x: 0, y: 0 });
+  const [hovered3DLayer, setHovered3DLayer] = useState<{
+    id: string;
+    name: string;
+    zLabel: string;
+  } | null>(null);
+  const [rendererBackend, setRendererBackend] =
+    useState<ShaderRendererBackend>('webgl2');
+  const [sandboxHoveredId, setSandboxHoveredId] = useState<string | null>(null);
+  const [sandboxPressedId, setSandboxPressedId] = useState<string | null>(null);
   const [contextMenu, setContextMenu] = useState<{
     x: number;
     y: number;
@@ -381,14 +446,26 @@ export function CanvasStage({
       );
       setPointerCanvas({ x: Math.round(ptCanvas.x), y: Math.round(ptCanvas.y) });
 
+      if (stack3D && stageRef.current) {
+        const rect = stageRef.current.getBoundingClientRect();
+        if (rect.width > 0 && rect.height > 0) {
+          const nx = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+          const ny = ((e.clientY - rect.top) / rect.height) * 2 - 1;
+          setPointer3DNorm({
+            x: Math.max(-1, Math.min(1, nx)),
+            y: Math.max(-1, Math.min(1, ny)),
+          });
+        }
+      }
+
       const interaction = interactionRef.current;
       if (interaction.kind === 'idle') return;
 
       if (interaction.kind === 'orbit3d') {
         const dx = e.clientX - interaction.startScreen.x;
         const dy = e.clientY - interaction.startScreen.y;
-        setYaw3D(Math.max(-65, Math.min(65, Math.round(interaction.startYaw + dx * 0.28))));
-        setPitch3D(Math.max(15, Math.min(72, Math.round(interaction.startPitch - dy * 0.25))));
+        setYaw3D(Math.max(-60, Math.min(60, Math.round(interaction.startYaw + dx * 0.28))));
+        setPitch3D(Math.max(8, Math.min(72, Math.round(interaction.startPitch - dy * 0.25))));
         return;
       }
 
@@ -629,6 +706,7 @@ export function CanvasStage({
     onViewportChange,
     smartGuidesEnabled,
     snapToGrid8px,
+    stack3D,
   ]);
 
   const handlePenClick = (ptCanvas: Point, detail: number) => {
@@ -1088,36 +1166,153 @@ export function CanvasStage({
         ? '#10B981'
         : '#6366F1';
 
+  const activeBoardNodes = useMemo(
+    () => getNodesForArtboard(doc, activeBoard.id).filter((n) => n.visible),
+    [doc, activeBoard.id],
+  );
+  const activeBoardBg = useMemo(
+    () => resolveArtboardBackground(activeBoard, doc.tokens),
+    [activeBoard, doc.tokens],
+  );
+  const explodeFactor = explodePercent / 100;
+  const zStackGeometryList = useMemo(
+    () => computeZStackGeometry(activeBoardNodes, explodeFactor),
+    [activeBoardNodes, explodeFactor],
+  );
+  const zStackGeometryMap = useMemo(() => {
+    const map = new Map<string, ZStackLayerGeometry>();
+    for (const item of zStackGeometryList) {
+      map.set(item.nodeId, item);
+    }
+    return map;
+  }, [zStackGeometryList]);
+  const strataAltitudes = useMemo(
+    () => computeStrataAltitudes(explodeFactor),
+    [explodeFactor],
+  );
+  const tilt3D = useMemo(
+    () =>
+      computePointer3DTilt(
+        pitch3D,
+        yaw3D,
+        pointer3DNorm.x,
+        pointer3DNorm.y,
+        pointerTiltEnabled && interactionRef.current.kind !== 'orbit3d',
+        7.5,
+      ),
+    [pitch3D, yaw3D, pointer3DNorm.x, pointer3DNorm.y, pointerTiltEnabled],
+  );
+  const activeShaderPresetMeta = useMemo(
+    () => getShaderPresetById(shaderConfig.preset),
+    [shaderConfig.preset],
+  );
+  const artboardPointerNorm = useMemo(() => {
+    if (stack3D) {
+      return {
+        x: (pointer3DNorm.x + 1) * 0.5,
+        y: (pointer3DNorm.y + 1) * 0.5,
+      };
+    }
+    const nx = (pointerCanvas.x - activeBoard.x) / Math.max(1, activeBoard.width);
+    const ny = (pointerCanvas.y - activeBoard.y) / Math.max(1, activeBoard.height);
+    if (nx < -0.25 || nx > 1.25 || ny < -0.25 || ny > 1.25) {
+      return { x: 0.52, y: 0.44 };
+    }
+    return {
+      x: Math.max(0, Math.min(1, nx)),
+      y: Math.max(0, Math.min(1, ny)),
+    };
+  }, [
+    stack3D,
+    pointer3DNorm.x,
+    pointer3DNorm.y,
+    pointerCanvas.x,
+    pointerCanvas.y,
+    activeBoard.x,
+    activeBoard.y,
+    activeBoard.width,
+    activeBoard.height,
+  ]);
+  const topStratumZPx = strataAltitudes[strataAltitudes.length - 1]?.liveZPx ?? 120;
+
+  const scale3D = Math.min(
+    (stageSize.width - 360) / Math.max(1, activeBoard.width),
+    (stageSize.height - 200) / Math.max(1, activeBoard.height),
+    0.62,
+  );
+
+  const handle3DLayerSelect = (e: React.MouseEvent, node: CanvasNode) => {
+    e.stopPropagation();
+    onSelectArtboard(node.artboardId ?? activeBoard.id);
+    onSelectIds([node.id]);
+  };
+
   const renderNodeElement = (
     node: CanvasNode,
     boardX: number,
     boardY: number,
     is3D = false,
-    depthIndex = 0,
   ) => {
     const style = resolveNodeStyle(node, doc.tokens);
     const isSelected = selectedIds.includes(node.id);
     const isHovered = hoveredId === node.id;
     const isEditing = !is3D && editingNodeId === node.id;
-    const semanticTier =
-      node.type === 'ellipse' && node.opacity < 0.5
-        ? 0.5
-        : node.type === 'glass' || node.type === 'frame'
-          ? 1.5
-          : node.type === 'rect' || node.type === 'line' || node.type === 'path'
-            ? 2.6
-            : node.type === 'image' || node.type === 'button'
-              ? 3.7
-              : 4.6;
-    const zElevation = is3D
-      ? Math.round(semanticTier * spread3D * 1.9 + (depthIndex % 3) * 2)
-      : 0;
+    const geom3D = is3D ? zStackGeometryMap.get(node.id) : undefined;
+    const zElevation = is3D ? (geom3D?.zOffsetPx ?? 0) : 0;
+    const isHovered3D = is3D && hovered3DLayer?.id === node.id;
 
-    const transform3D = is3D
+    // On-Canvas Interactive Component Sandbox state visual kinematics
+    const isInteractiveSurface = node.type === 'button' || node.type === 'glass';
+    const effectiveSandboxState: SandboxInteractiveState =
+      !is3D && isInteractiveSurface
+        ? sandboxPressedId === node.id
+          ? 'pressed'
+          : sandboxOpen && sandboxHoveredId === node.id && sandboxState === 'default'
+            ? 'hover'
+            : sandboxState
+        : 'default';
+    const sandboxSpec =
+      effectiveSandboxState !== 'default'
+        ? computeInteractiveStateStyle(effectiveSandboxState, doc.tokens.brandAccent)
+        : null;
+
+    const baseTransform = is3D
       ? `translateZ(${zElevation}px)${node.rotation !== 0 ? ` rotate(${node.rotation}deg)` : ''}`
       : node.rotation !== 0
         ? `rotate(${node.rotation}deg)`
-        : undefined;
+        : '';
+    const combinedTransform =
+      sandboxSpec && sandboxSpec.transform !== 'none'
+        ? `${baseTransform ? `${baseTransform} ` : ''}${sandboxSpec.transform}`
+        : baseTransform || undefined;
+
+    const isGlassOnShader = !is3D && shaderConfig.enabled && node.type === 'glass';
+    const glassShaderShadow = isGlassOnShader
+      ? '0 18px 46px rgba(0,0,0,0.42), inset 0 1px 0 rgba(255,255,255,0.16)'
+      : undefined;
+
+    const resolved3DBorder =
+      is3D && (isSelected || isHovered3D)
+        ? `1.5px solid ${isSelected ? '#06B6D4' : (geom3D?.accentColor ?? '#6366F1')}`
+        : node.strokeWidth > 0
+          ? `${node.strokeWidth}px solid ${style.strokeColor}`
+          : is3D && node.type !== 'text'
+            ? `1px solid ${geom3D?.accentColor ?? 'rgba(99,102,241,0.45)'}66`
+            : undefined;
+
+    const resolvedBoxShadow = is3D
+      ? isSelected
+        ? `0 0 0 2px rgba(6, 182, 212, 0.85), 0 ${geom3D?.shadowBlurPx ?? 24}px ${(geom3D?.shadowBlurPx ?? 24) * 1.45}px rgba(0,0,0,${geom3D?.shadowOpacity ?? 0.45})`
+        : node.type === 'text'
+          ? undefined
+          : `0 ${geom3D?.shadowBlurPx ?? 18}px ${(geom3D?.shadowBlurPx ?? 18) * 1.4}px rgba(0,0,0,${geom3D?.shadowOpacity ?? 0.42})`
+      : sandboxSpec && sandboxSpec.boxShadow !== 'none'
+        ? sandboxSpec.boxShadow
+        : glassShaderShadow
+          ? glassShaderShadow
+          : style.boxShadow !== 'none'
+            ? style.boxShadow
+            : undefined;
 
     if (node.type === 'image') {
       const filterCss = buildImageFilterCss(node.imageFilter);
@@ -1126,9 +1321,19 @@ export function CanvasStage({
           key={node.id}
           data-testid={`canvas-node-${node.id}`}
           data-node-type="image"
-          onPointerDown={is3D ? undefined : (e) => handleNodePointerDown(e, node)}
+          data-z-elevation={is3D ? zElevation : undefined}
+          onClick={is3D ? (e) => handle3DLayerSelect(e, node) : undefined}
+          onPointerDown={is3D ? (e) => e.stopPropagation() : (e) => handleNodePointerDown(e, node)}
           onContextMenu={is3D ? undefined : (e) => handleNodeContextMenu(e, node)}
-          onPointerEnter={() => (is3D ? setHovered3DLayer(node.name) : setHoveredId(node.id))}
+          onPointerEnter={() =>
+            is3D
+              ? setHovered3DLayer({
+                  id: node.id,
+                  name: node.name,
+                  zLabel: geom3D?.stratumLabel ?? `Z+${zElevation}`,
+                })
+              : setHoveredId(node.id)
+          }
           onPointerLeave={() =>
             is3D
               ? setHovered3DLayer(null)
@@ -1140,25 +1345,16 @@ export function CanvasStage({
             top: node.y - boardY,
             width: node.width,
             height: node.height,
-            transform: transform3D,
+            transform: combinedTransform,
             borderRadius: style.radius,
             opacity: node.opacity,
-            border:
-              node.strokeWidth > 0
-                ? `${node.strokeWidth}px solid ${style.strokeColor}`
-                : is3D
-                  ? '1px solid rgba(6, 182, 212, 0.5)'
-                  : undefined,
-            boxShadow: is3D
-              ? '0 18px 40px rgba(0,0,0,0.45)'
-              : style.boxShadow !== 'none'
-                ? style.boxShadow
-                : undefined,
+            border: resolved3DBorder,
+            boxShadow: resolvedBoxShadow,
             outline:
               !is3D && !isSelected && isHovered
                 ? `${1.25 / viewport.zoom}px solid ${accentBorderColor}`
                 : undefined,
-            cursor: !is3D && activeTool === 'select' ? 'move' : undefined,
+            cursor: is3D ? 'pointer' : activeTool === 'select' ? 'move' : undefined,
           }}
         >
           <img
@@ -1193,9 +1389,19 @@ export function CanvasStage({
           key={node.id}
           data-testid={`canvas-node-${node.id}`}
           data-node-type="path"
-          onPointerDown={is3D ? undefined : (e) => handleNodePointerDown(e, node)}
+          data-z-elevation={is3D ? zElevation : undefined}
+          onClick={is3D ? (e) => handle3DLayerSelect(e, node) : undefined}
+          onPointerDown={is3D ? (e) => e.stopPropagation() : (e) => handleNodePointerDown(e, node)}
           onContextMenu={is3D ? undefined : (e) => handleNodeContextMenu(e, node)}
-          onPointerEnter={() => (is3D ? setHovered3DLayer(node.name) : setHoveredId(node.id))}
+          onPointerEnter={() =>
+            is3D
+              ? setHovered3DLayer({
+                  id: node.id,
+                  name: node.name,
+                  zLabel: geom3D?.stratumLabel ?? `Z+${zElevation}`,
+                })
+              : setHoveredId(node.id)
+          }
           onPointerLeave={() =>
             is3D
               ? setHovered3DLayer(null)
@@ -1208,12 +1414,14 @@ export function CanvasStage({
             width: node.width,
             height: node.height,
             opacity: node.opacity,
-            transform: transform3D,
+            transform: combinedTransform,
             outline:
-              !is3D && !isSelected && isHovered
-                ? `${1.25 / viewport.zoom}px dashed ${accentBorderColor}`
-                : undefined,
-            cursor: !is3D && activeTool === 'select' ? 'move' : undefined,
+              is3D && isSelected
+                ? '1.5px solid #06B6D4'
+                : !is3D && !isSelected && isHovered
+                  ? `${1.25 / viewport.zoom}px dashed ${accentBorderColor}`
+                  : undefined,
+            cursor: is3D ? 'pointer' : activeTool === 'select' ? 'move' : undefined,
           }}
         >
           <svg
@@ -1260,7 +1468,24 @@ export function CanvasStage({
         key={node.id}
         data-testid={`canvas-node-${node.id}`}
         data-node-type={node.type}
-        onPointerDown={is3D ? undefined : (e) => handleNodePointerDown(e, node)}
+        data-z-elevation={is3D ? zElevation : undefined}
+        data-sandbox-state={effectiveSandboxState !== 'default' ? effectiveSandboxState : undefined}
+        onClick={is3D ? (e) => handle3DLayerSelect(e, node) : undefined}
+        onPointerDown={
+          is3D
+            ? (e) => e.stopPropagation()
+            : (e) => {
+                if (sandboxOpen && node.type === 'button') {
+                  setSandboxPressedId(node.id);
+                }
+                handleNodePointerDown(e, node);
+              }
+        }
+        onPointerUp={
+          !is3D && sandboxOpen && node.type === 'button'
+            ? () => setSandboxPressedId((cur) => (cur === node.id ? null : cur))
+            : undefined
+        }
         onContextMenu={is3D ? undefined : (e) => handleNodeContextMenu(e, node)}
         onDoubleClick={
           is3D
@@ -1270,38 +1495,49 @@ export function CanvasStage({
                 startInlineText(node);
               }
         }
-        onPointerEnter={() => (is3D ? setHovered3DLayer(node.name) : setHoveredId(node.id))}
-        onPointerLeave={() =>
-          is3D
-            ? setHovered3DLayer(null)
-            : setHoveredId((prev) => (prev === node.id ? null : prev))
-        }
+        onPointerEnter={() => {
+          if (is3D) {
+            setHovered3DLayer({
+              id: node.id,
+              name: node.name,
+              zLabel: geom3D?.stratumLabel ?? `Z+${zElevation}`,
+            });
+          } else {
+            setHoveredId(node.id);
+            if (sandboxOpen && isInteractiveSurface) {
+              setSandboxHoveredId(node.id);
+            }
+          }
+        }}
+        onPointerLeave={() => {
+          if (is3D) {
+            setHovered3DLayer(null);
+          } else {
+            setHoveredId((prev) => (prev === node.id ? null : prev));
+            setSandboxHoveredId((prev) => (prev === node.id ? null : prev));
+            setSandboxPressedId((prev) => (prev === node.id ? null : prev));
+          }
+        }}
         className="absolute"
         style={{
           left: node.x - boardX,
           top: node.y - boardY,
           width: node.width,
           height: node.height,
-          transform: transform3D,
+          transform: combinedTransform,
+          transition:
+            is3D || sandboxSpec || sandboxOpen
+              ? 'transform 180ms cubic-bezier(0.22, 1, 0.36, 1), box-shadow 180ms ease, filter 180ms ease, opacity 180ms ease'
+              : undefined,
           borderRadius: style.radius,
-          opacity: node.opacity,
+          opacity: node.opacity * (sandboxSpec ? sandboxSpec.opacityMultiplier : 1),
           background: node.type === 'text' ? 'transparent' : style.cssBackground,
-          border:
-            node.strokeWidth > 0
-              ? `${node.strokeWidth}px solid ${style.strokeColor}`
-              : is3D && node.type !== 'text'
-                ? '1px solid rgba(99, 102, 241, 0.35)'
-                : undefined,
+          border: resolved3DBorder,
           backdropFilter: !is3D && node.blur > 0 ? `blur(${node.blur}px)` : undefined,
           WebkitBackdropFilter:
             !is3D && node.blur > 0 ? `blur(${node.blur}px)` : undefined,
-          boxShadow: is3D
-            ? node.type === 'text'
-              ? undefined
-              : '0 14px 28px rgba(0,0,0,0.42)'
-            : style.boxShadow !== 'none'
-              ? style.boxShadow
-              : undefined,
+          boxShadow: resolvedBoxShadow,
+          filter: sandboxSpec && sandboxSpec.filter !== 'none' ? sandboxSpec.filter : undefined,
           mixBlendMode: is3D ? undefined : node.blendMode,
           display: node.type === 'button' || node.type === 'text' ? 'flex' : undefined,
           alignItems: node.type === 'button' ? 'center' : 'flex-start',
@@ -1314,19 +1550,35 @@ export function CanvasStage({
                   ? 'flex-end'
                   : 'flex-start',
           outline:
-            !is3D && !isSelected && isHovered
-              ? `${1.25 / viewport.zoom}px solid ${accentBorderColor}`
-              : undefined,
-          cursor:
-            !is3D && activeTool === 'select'
-              ? uiMode !== 'design'
+            is3D && isSelected && node.type === 'text'
+              ? '1.5px solid #06B6D4'
+              : sandboxSpec && sandboxSpec.outline !== 'none'
+                ? sandboxSpec.outline
+                : !is3D && !isSelected && isHovered
+                  ? `${1.25 / viewport.zoom}px solid ${accentBorderColor}`
+                  : undefined,
+          cursor: is3D
+            ? 'pointer'
+            : activeTool === 'select'
+              ? sandboxOpen && isInteractiveSurface
                 ? 'pointer'
-                : node.locked
-                  ? 'not-allowed'
-                  : 'move'
+                : uiMode !== 'design'
+                  ? 'pointer'
+                  : node.locked
+                    ? 'not-allowed'
+                    : 'move'
               : undefined,
         }}
       >
+        {is3D && isSelected && (
+          <div
+            data-testid="zstack-selected-badge"
+            className="absolute -top-6 left-0 px-1.5 py-0.5 rounded font-mono-tech text-[9px] font-semibold text-slate-950 whitespace-nowrap pointer-events-none shadow-lg"
+            style={{ backgroundColor: '#22D3EE' }}
+          >
+            {node.name} · Z+{zElevation}px
+          </div>
+        )}
         {(node.type === 'text' || node.type === 'button') &&
           (isEditing ? (
             <textarea
@@ -1373,49 +1625,50 @@ export function CanvasStage({
     );
   };
 
-  const activeBoardNodes = useMemo(
-    () => getNodesForArtboard(doc, activeBoard.id).filter((n) => n.visible),
-    [doc, activeBoard.id],
-  );
-  const activeBoardBg = useMemo(
-    () => resolveArtboardBackground(activeBoard, doc.tokens),
-    [activeBoard, doc.tokens],
-  );
-  const scale3D = Math.min(
-    (stageSize.width - 220) / Math.max(1, activeBoard.width),
-    (stageSize.height - 200) / Math.max(1, activeBoard.height),
-    0.78,
-  );
-
   return (
-    <div
-      ref={stageRef}
-      data-testid="canvas-stage"
-      data-canvas-backdrop={canvasBackdrop}
-      onPointerDown={handleStagePointerDown}
-      onDragOver={handleDragOver}
-      onDragLeave={handleDragLeave}
-      onDrop={handleDrop}
-      className="flex-1 relative overflow-hidden select-none transition-colors duration-200"
-      style={{
-        cursor: cursorStyle,
-        backgroundColor: 'var(--studio-canvas)',
-        backgroundImage:
-          'radial-gradient(circle, var(--studio-grid-dot) 1px, transparent 1px)',
-        backgroundSize: `${gridSpacing}px ${gridSpacing}px`,
-        backgroundPosition: `${viewport.x}px ${viewport.y}px`,
-      }}
-    >
-      {/* Top-Left Floating Responsive Breakpoint & Grid HUD */}
+    <div className="flex-1 min-w-0 min-h-0 flex flex-col overflow-hidden">
+      {/* v7.0 Docked Live Procedural Shader Studio & Sandbox Bar */}
+      <ShaderStudioBar
+        config={shaderConfig}
+        rendererBackend={rendererBackend}
+        sandboxOpen={sandboxOpen}
+        codeDrawerOpen={codeDrawerOpen}
+        onChangeConfig={onUpdateShaderConfig}
+        onSelectPreset={onSelectShaderPreset}
+        onSelectPalette={onSelectShaderPalette}
+        onToggleSandbox={onToggleSandbox}
+        onToggleCodeDrawer={onToggleCodeDrawer}
+      />
+
       <div
-        data-testid="responsive-viewport-toolbar"
-        onPointerDown={(e) => e.stopPropagation()}
-        className="hidden sm:flex absolute top-8 left-8 z-30 items-center gap-1 p-0.5 rounded-lg border backdrop-blur-md shadow-lg"
+        ref={stageRef}
+        data-testid="canvas-stage"
+        data-canvas-backdrop={canvasBackdrop}
+        onPointerDown={handleStagePointerDown}
+        onDragOver={handleDragOver}
+        onDragLeave={handleDragLeave}
+        onDrop={handleDrop}
+        className="flex-1 min-h-0 relative overflow-hidden select-none transition-colors duration-200"
         style={{
-          backgroundColor: 'color-mix(in srgb, var(--studio-surface) 92%, transparent)',
-          borderColor: 'var(--studio-border-strong)',
+          cursor: cursorStyle,
+          backgroundColor: 'var(--studio-canvas)',
+          backgroundImage:
+            'radial-gradient(circle, var(--studio-grid-dot) 1px, transparent 1px)',
+          backgroundSize: `${gridSpacing}px ${gridSpacing}px`,
+          backgroundPosition: `${viewport.x}px ${viewport.y}px`,
         }}
       >
+      {/* Top-Left Floating Responsive Breakpoint & Grid HUD (2D Canvas Mode) */}
+      {!stack3D && (
+        <div
+          data-testid="responsive-viewport-toolbar"
+          onPointerDown={(e) => e.stopPropagation()}
+          className="hidden sm:flex absolute top-8 left-8 z-30 items-center gap-1 p-0.5 rounded-lg border backdrop-blur-md shadow-lg"
+          style={{
+            backgroundColor: 'color-mix(in srgb, var(--studio-surface) 92%, transparent)',
+            borderColor: 'var(--studio-border-strong)',
+          }}
+        >
         {BREAKPOINT_PRESETS.map((bp) => {
           const isActive = breakpoint === bp.id;
           const Icon =
@@ -1487,8 +1740,9 @@ export function CanvasStage({
           <span className="hidden xl:inline">{labels.grid8pxBtn}</span>
         </button>
       </div>
+      )}
 
-      {/* Top-Right Floating Canvas HUD: Daylight/Obsidian Backdrop + Measure + 3D Stack */}
+      {/* Top-Right Floating Canvas HUD: Daylight/Obsidian Backdrop + Measure + 3D Z-Stack */}
       <div
         onPointerDown={(e) => e.stopPropagation()}
         className="absolute top-8 right-3 z-30 flex items-center gap-1.5"
@@ -1543,24 +1797,24 @@ export function CanvasStage({
           }}
         >
           <Ruler size={11} />
-          <span>{labels.measureBtn}</span>
+          <span className="hidden sm:inline">{labels.measureBtn}</span>
         </button>
 
         <button
           type="button"
           data-testid="btn-toggle-3dstack"
           onClick={onToggleStack3D}
-          title="3D Stack — Explode Z-index layers in interactive 3D space"
+          title="3D Z-Stack Exploder — Separate Shader, Glass, Cards & Typography into Interactive 3D Strata"
           className="h-7 px-2.5 rounded-lg border backdrop-blur-md font-mono-tech text-[10px] font-semibold flex items-center gap-1.5 transition-all cursor-pointer"
           style={{
             backgroundColor: stack3D
-              ? 'rgba(99, 102, 241, 0.25)'
+              ? 'rgba(99, 102, 241, 0.28)'
               : 'color-mix(in srgb, var(--studio-surface) 90%, transparent)',
             borderColor: stack3D
               ? '#6366F1'
               : 'var(--studio-border-strong)',
-            color: stack3D ? '#C7D2FE' : 'var(--studio-text-secondary)',
-            boxShadow: stack3D ? '0 0 18px rgba(99,102,241,0.35)' : undefined,
+            color: stack3D ? '#E0E7FF' : 'var(--studio-text-secondary)',
+            boxShadow: stack3D ? '0 0 20px rgba(99,102,241,0.42)' : undefined,
           }}
         >
           <Box size={11} />
@@ -1579,103 +1833,296 @@ export function CanvasStage({
       )}
 
       {/* ============================================================== */}
-      {/* MODE A: 3D STACK (2.5D Z-INDEX LAYER EXPLODE VIEW)             */}
+      {/* MODE A: 3D ISOMETRIC Z-LAYER STACK EXPLODER (v7.0)             */}
       {/* ============================================================== */}
       {stack3D ? (
         <div
           data-testid="stack-3d-stage"
           className="absolute inset-0 flex items-center justify-center overflow-hidden"
           style={{
-            perspective: '1600px',
+            perspective: '1750px',
             background:
-              'radial-gradient(circle at 50% 45%, rgba(99,102,241,0.14), transparent 62%)',
+              'radial-gradient(circle at 46% 48%, rgba(6,182,212,0.12), rgba(99,102,241,0.09) 38%, transparent 72%)',
           }}
         >
-          {/* Floating 3D Orbit Controls */}
+          {/* Floating Interactive 3D Z-Stack Control HUD (Left Gallery Rail — Zero Overlap with 3D Badges) */}
           <div
+            data-testid="zstack-hud"
             onPointerDown={(e) => e.stopPropagation()}
-            className="absolute top-18 right-3 z-40 w-56 rounded-xl border p-3 space-y-2.5 backdrop-blur-md shadow-2xl"
+            className="hidden sm:block absolute top-8 left-4 z-40 w-56 rounded-xl border p-3 space-y-2.5 backdrop-blur-md shadow-2xl"
             style={{
-              backgroundColor: 'color-mix(in srgb, var(--studio-surface) 92%, transparent)',
+              backgroundColor: 'color-mix(in srgb, var(--studio-surface) 93%, transparent)',
               borderColor: 'var(--studio-border-strong)',
             }}
           >
             <div className="flex items-center justify-between font-mono-tech text-[10px]">
-              <span className="flex items-center gap-1.5 font-semibold" style={{ color: 'var(--studio-cyan)' }}>
+              <span
+                className="flex items-center gap-1.5 font-semibold tracking-wider"
+                style={{ color: 'var(--studio-cyan)' }}
+              >
                 <Layers size={11} />
-                <span>Z-DEPTH EXPLODE</span>
+                <span>3D Z-STACK EXPLODER</span>
               </span>
               <button
                 type="button"
+                data-testid="btn-zstack-reset"
                 onClick={() => {
-                  setPitch3D(48);
+                  setPitch3D(46);
                   setYaw3D(-24);
-                  setSpread3D(14);
+                  setExplodePercent(80);
+                  setPointerTiltEnabled(true);
                 }}
-                title="Reset 3D Angle"
+                title="Reset 3D Isometric Camera"
                 className="p-1 rounded hover:bg-white/10 cursor-pointer"
                 style={{ color: 'var(--studio-text-muted)' }}
               >
                 <RotateCcw size={10} />
               </button>
             </div>
+
+            {/* Z-Depth Spacing Scrubber 0% -> 100% */}
             <div className="space-y-1">
-              <div className="flex justify-between font-mono-tech text-[9px]" style={{ color: 'var(--studio-text-secondary)' }}>
-                <span>Layer Spread</span>
-                <span>{spread3D}px</span>
+              <div
+                className="flex justify-between font-mono-tech text-[9.5px]"
+                style={{ color: 'var(--studio-text-secondary)' }}
+              >
+                <span>Z-DEPTH EXPLODE</span>
+                <span style={{ color: 'var(--studio-cyan)' }}>{explodePercent}%</span>
               </div>
               <input
                 type="range"
-                min={4}
-                max={26}
-                value={spread3D}
-                onChange={(e) => setSpread3D(Number(e.target.value))}
+                data-testid="zstack-explode-slider"
+                aria-label="Z-Depth Explode Percentage"
+                min={0}
+                max={100}
+                step={5}
+                value={explodePercent}
+                onChange={(e) => setExplodePercent(Number(e.target.value))}
                 className="w-full studio-range"
               />
             </div>
-            <div className="grid grid-cols-2 gap-1.5 font-mono-tech text-[9px]" style={{ color: 'var(--studio-text-muted)' }}>
-              <div className="px-2 py-1 rounded border" style={{ borderColor: 'var(--studio-border)' }}>
-                PITCH {pitch3D}°
-              </div>
-              <div className="px-2 py-1 rounded border" style={{ borderColor: 'var(--studio-border)' }}>
-                YAW {yaw3D}°
-              </div>
+
+            {/* Camera Angle Presets */}
+            <div className="grid grid-cols-3 gap-1">
+              {(
+                [
+                  ['Iso 80%', 46, -24, 80],
+                  ['Hero Low', 58, -18, 100],
+                  ['Flat 0%', 26, -10, 0],
+                ] as const
+              ).map(([lbl, p, y, exp]) => (
+                <button
+                  key={lbl}
+                  type="button"
+                  onClick={() => {
+                    setPitch3D(p);
+                    setYaw3D(y);
+                    setExplodePercent(exp);
+                  }}
+                  className="h-6 rounded border font-mono-tech text-[9px] font-medium hover:bg-white/10 cursor-pointer"
+                  style={{
+                    backgroundColor: 'var(--studio-surface-2)',
+                    borderColor: 'var(--studio-border)',
+                    color: 'var(--studio-text-secondary)',
+                  }}
+                >
+                  {lbl}
+                </button>
+              ))}
             </div>
-            <div className="text-[10px]" style={{ color: 'var(--studio-text-secondary)' }}>
-              {hovered3DLayer
-                ? `Inspecting: ${hovered3DLayer}`
-                : `Drag canvas to orbit · ${activeBoardNodes.length} elevated layers`}
+
+            {/* Pointer Parallax Tilt Toggle + Rot Readout */}
+            <div className="flex items-center justify-between gap-1.5">
+              <button
+                type="button"
+                data-testid="btn-zstack-pointer-tilt"
+                onClick={() => setPointerTiltEnabled((v) => !v)}
+                className="h-6 px-2 rounded border font-mono-tech text-[9px] font-semibold flex items-center gap-1 cursor-pointer"
+                style={{
+                  backgroundColor: pointerTiltEnabled
+                    ? 'rgba(6, 182, 212, 0.16)'
+                    : 'var(--studio-surface-2)',
+                  borderColor: pointerTiltEnabled
+                    ? 'rgba(6, 182, 212, 0.5)'
+                    : 'var(--studio-border)',
+                  color: pointerTiltEnabled
+                    ? 'var(--studio-cyan)'
+                    : 'var(--studio-text-muted)',
+                }}
+              >
+                <Compass size={10} />
+                <span>Tilt {pointerTiltEnabled ? 'ON' : 'OFF'}</span>
+              </button>
+              <span
+                className="font-mono-tech text-[9px]"
+                style={{ color: 'var(--studio-text-muted)' }}
+              >
+                RX {Math.round(tilt3D.rotateX)}° · RY {Math.round(tilt3D.rotateY)}°
+              </span>
+            </div>
+
+            {/* Live 4-Strata Architectural Legend */}
+            <div
+              className="pt-2 border-t space-y-1"
+              style={{ borderColor: 'var(--studio-border)' }}
+            >
+              {strataAltitudes.map((st) => (
+                <div
+                  key={st.id}
+                  className="flex items-center justify-between font-mono-tech text-[9.5px]"
+                >
+                  <span className="flex items-center gap-1.5">
+                    <span
+                      className="w-2 h-2 rounded-full shrink-0"
+                      style={{ backgroundColor: st.accentColor }}
+                    />
+                    <span style={{ color: 'var(--studio-text)' }}>{st.label}</span>
+                  </span>
+                  <span style={{ color: st.accentColor }}>Z+{st.liveZPx}px</span>
+                </div>
+              ))}
+            </div>
+
+            <div
+              className="pt-1.5 border-t text-[10px] leading-snug"
+              style={{
+                borderColor: 'var(--studio-border)',
+                color: 'var(--studio-text-secondary)',
+              }}
+            >
+              {hovered3DLayer ? (
+                <span>
+                  Hover: <strong className="text-cyan-300">{hovered3DLayer.name}</strong> ({hovered3DLayer.zLabel})
+                </span>
+              ) : primarySelected ? (
+                <span>
+                  Selected: <strong className="text-cyan-300">{primarySelected.name}</strong> — Edit in Inspector
+                </span>
+              ) : (
+                `Click any floating 3D layer to select & edit · Drag empty space to orbit`
+              )}
             </div>
           </div>
 
           {/* 3D Isometric Transformed Artboard Stack */}
           <div
+            data-testid="zstack-3d-rig"
             className="relative"
             style={{
               width: activeBoard.width,
               height: activeBoard.height,
               transformStyle: 'preserve-3d',
-              transform: `scale(${scale3D}) rotateX(${pitch3D}deg) rotateZ(${yaw3D}deg)`,
+              transform: `translate3d(44px, 28px, 0) scale(${Math.max(0.32, scale3D)}) rotateX(${tilt3D.rotateX}deg) rotateY(${tilt3D.rotateY}deg)`,
               transition:
                 interactionRef.current.kind === 'orbit3d'
                   ? 'none'
-                  : 'transform 220ms cubic-bezier(0.22, 1, 0.36, 1)',
+                  : 'transform 180ms cubic-bezier(0.22, 1, 0.36, 1)',
             }}
           >
-            {/* Base Artboard Slab */}
+            {/* Stratum 0: Base Artboard Slab + Live 60fps WebGL2 Shader Plane */}
             <div
-              className="absolute inset-0"
+              data-testid="zstack-base-shader-plane"
+              className="absolute inset-0 overflow-hidden"
               style={{
                 borderRadius: activeBoard.radius,
                 background: activeBoardBg.cssBackground,
                 boxShadow:
-                  '0 40px 100px rgba(0, 0, 0, 0.72), 0 0 0 1.5px rgba(99, 102, 241, 0.5)',
+                  '0 44px 110px rgba(0, 0, 0, 0.78), 0 0 0 1.5px rgba(6, 182, 212, 0.62)',
               }}
-            />
+            >
+              {shaderConfig.enabled && (
+                <ProceduralShaderCanvas
+                  config={shaderConfig}
+                  width={activeBoard.width}
+                  height={activeBoard.height}
+                  borderRadius={activeBoard.radius}
+                  pointerNorm={artboardPointerNorm}
+                  testId="procedural-shader-canvas-3d"
+                  onRendererReady={setRendererBackend}
+                />
+              )}
+            </div>
 
-            {/* Floating Z-Elevated Layers */}
-            {activeBoardNodes.map((node, idx) =>
-              renderNodeElement(node, activeBoard.x, activeBoard.y, true, idx),
+            {/* Translucent Architectural Reference Plane at Cards Stratum */}
+            {explodePercent > 10 && (
+              <div
+                className="absolute inset-0 pointer-events-none"
+                style={{
+                  borderRadius: activeBoard.radius,
+                  transform: `translateZ(${strataAltitudes[2].liveZPx}px)`,
+                  border: '1px dashed rgba(6, 182, 212, 0.32)',
+                  background:
+                    'linear-gradient(135deg, rgba(6,182,212,0.03), rgba(99,102,241,0.04))',
+                }}
+              />
+            )}
+
+            {/* Vertical Corner Elevation Connector Struts (Cyan & Vermilion Beams) */}
+            {explodePercent > 10 &&
+              (
+                [
+                  { x: 0, y: 0, color: '#06B6D4' },
+                  { x: activeBoard.width, y: 0, color: '#F43F5E' },
+                  { x: 0, y: activeBoard.height, color: '#6366F1' },
+                  { x: activeBoard.width, y: activeBoard.height, color: '#06B6D4' },
+                ] as const
+              ).map((pin, pIdx) => (
+                <div
+                  key={`strut-${pIdx}`}
+                  className="absolute pointer-events-none"
+                  style={{
+                    left: pin.x,
+                    top: pin.y,
+                    width: 2,
+                    height: topStratumZPx + 14,
+                    transformOrigin: 'top center',
+                    transform: 'rotateX(90deg)',
+                    background: `linear-gradient(to bottom, ${pin.color}, rgba(244,63,94,0.65))`,
+                    boxShadow: `0 0 10px ${pin.color}88`,
+                  }}
+                />
+              ))}
+
+            {/* Right-Edge Floating 3D Architectural Elevation Badges */}
+            {strataAltitudes.map((stratum) => (
+              <div
+                key={`badge-${stratum.id}`}
+                data-testid={`zstack-badge-${stratum.id}`}
+                className="absolute flex items-center gap-2 pointer-events-none"
+                style={{
+                  left: activeBoard.width + 10,
+                  top: 380 - stratum.tierIndex * 88,
+                  transform: `translateZ(${stratum.liveZPx}px) rotateX(${-Math.round(tilt3D.rotateX * 0.45)}deg)`,
+                }}
+              >
+                <div
+                  className="w-8 h-[1.5px]"
+                  style={{
+                    background: `linear-gradient(to right, ${stratum.accentColor}, ${stratum.accentColor}55)`,
+                    boxShadow: `0 0 8px ${stratum.accentColor}`,
+                  }}
+                />
+                <div
+                  className="px-2.5 py-1 rounded-md border font-mono-tech text-[12px] font-semibold whitespace-nowrap shadow-xl backdrop-blur-md flex items-center gap-1.5"
+                  style={{
+                    backgroundColor: 'rgba(11, 14, 22, 0.94)',
+                    borderColor: `${stratum.accentColor}CC`,
+                    color: '#F8FAFC',
+                    boxShadow: `0 10px 26px rgba(0,0,0,0.6), 0 0 14px ${stratum.accentColor}55`,
+                  }}
+                >
+                  <span
+                    className="w-2 h-2 rounded-full shrink-0"
+                    style={{ backgroundColor: stratum.accentColor }}
+                  />
+                  <span>{stratum.liveBadgeLabel}</span>
+                </div>
+              </div>
+            ))}
+
+            {/* Floating Interactive Z-Elevated Layers (Click directly in 3D to select!) */}
+            {activeBoardNodes.map((node) =>
+              renderNodeElement(node, activeBoard.x, activeBoard.y, true),
             )}
           </div>
         </div>
@@ -1818,7 +2265,7 @@ export function CanvasStage({
                     }}
                   >
                     <span
-                      className="font-mono-tech font-medium tracking-wide truncate"
+                      className="font-mono-tech font-medium tracking-wide truncate flex items-center gap-2"
                       style={{
                         fontSize: `${11 / viewport.zoom}px`,
                         color: isPrimaryActive
@@ -1826,8 +2273,23 @@ export function CanvasStage({
                           : 'var(--studio-text-muted)',
                       }}
                     >
-                      {artboards.length > 1 ? `0${bIdx + 1} · ` : ''}
-                      {board.name}
+                      <span>
+                        {artboards.length > 1 ? `0${bIdx + 1} · ` : ''}
+                        {board.name}
+                      </span>
+                      {isPrimaryActive && shaderConfig.enabled && viewport.zoom >= 0.42 && (
+                        <span
+                          className="px-1.5 py-0.5 rounded font-semibold uppercase"
+                          style={{
+                            fontSize: `${9 / viewport.zoom}px`,
+                            backgroundColor: 'rgba(6, 182, 212, 0.16)',
+                            color: '#22D3EE',
+                            border: `${1 / viewport.zoom}px solid rgba(6, 182, 212, 0.45)`,
+                          }}
+                        >
+                          GLSL · {activeShaderPresetMeta.shortName}
+                        </span>
+                      )}
                     </span>
                     <span
                       className="font-mono-tech shrink-0"
@@ -1858,10 +2320,24 @@ export function CanvasStage({
                             ? '0 18px 48px rgba(15, 23, 42, 0.16), 0 0 0 1px rgba(79, 70, 229, 0.28)'
                             : '0 12px 32px rgba(15, 23, 42, 0.11), 0 0 0 1px rgba(15, 23, 42, 0.08)'
                           : isPrimaryActive
-                            ? '0 28px 90px rgba(0, 0, 0, 0.48), 0 0 0 1px rgba(99,102,241,0.28)'
+                            ? '0 28px 90px rgba(0, 0, 0, 0.48), 0 0 0 1px rgba(6,182,212,0.34)'
                             : '0 24px 72px rgba(0, 0, 0, 0.42), 0 0 0 1px rgba(255,255,255,0.08)',
                     }}
                   >
+                    {/* Live 60fps WebGL2 Procedural GLSL Shader Fill Layer */}
+                    {isPrimaryActive && shaderConfig.enabled && (
+                      <ProceduralShaderCanvas
+                        config={shaderConfig}
+                        width={board.width}
+                        height={board.height}
+                        borderRadius={board.radius}
+                        pointerNorm={artboardPointerNorm}
+                        className="absolute inset-0"
+                        testId="procedural-shader-canvas"
+                        onRendererReady={setRendererBackend}
+                      />
+                    )}
+
                     {/* Visual 8px Baseline Micro-Grid Overlay */}
                     {snapToGrid8px && (
                       <div
@@ -1902,7 +2378,7 @@ export function CanvasStage({
                     })()}
 
                     {boardNodes.map((node) =>
-                      renderNodeElement(node, board.x, board.y, false, 0),
+                      renderNodeElement(node, board.x, board.y, false),
                     )}
                   </div>
                 </div>
@@ -2529,7 +3005,8 @@ export function CanvasStage({
             </div>
           )}
 
-          {/* Multi-Artboard Floating Interactive Canvas Minimap */}
+          {/* Multi-Artboard Floating Interactive Canvas Minimap (auto-hidden when Live Code Drawer is open) */}
+          {!codeDrawerOpen && (
           <div
             data-testid="canvas-minimap"
             onPointerDown={(e) => e.stopPropagation()}
@@ -2627,6 +3104,7 @@ export function CanvasStage({
               </div>
             )}
           </div>
+          )}
         </>
       )}
 
@@ -2641,13 +3119,13 @@ export function CanvasStage({
       >
         <span className="min-w-[82px]">
           {stack3D
-            ? `3D ${pitch3D}°/${yaw3D}°`
+            ? `3D ${Math.round(tilt3D.rotateX)}°/${Math.round(tilt3D.rotateY)}° · ${explodePercent}%`
             : `X:${pointerCanvas.x}  Y:${pointerCanvas.y}`}
         </span>
         <span className="opacity-35">|</span>
         <span className="hidden md:inline">
           {stack3D
-            ? 'Drag anywhere to orbit 3D layer stack · Click 3D Stack to exit'
+            ? 'Click any floating 3D layer to select & edit · Drag space to orbit'
             : activeTool === 'pen'
               ? labels.penHint
               : labels.canvasHint}
@@ -2670,6 +3148,27 @@ export function CanvasStage({
             : 'Local'}
         </span>
       </div>
+      </div>
+
+      {/* v7.0 Docked Live Component Sandbox & Diff-Highlighted GLSL / React 19 / SwiftUI Code Drawer */}
+      {(sandboxOpen || codeDrawerOpen) && (
+        <Suspense fallback={null}>
+          <LazyLiveCodeSandboxDrawer
+            sandboxOpen={sandboxOpen}
+            codeDrawerOpen={codeDrawerOpen}
+            sandboxState={sandboxState}
+            onSelectSandboxState={onSelectSandboxState}
+            onRepairWcagAAA={onRepairWcagAAA}
+            wcagRepairSummary={wcagRepairSummary}
+            shaderConfig={shaderConfig}
+            rendererBackend={rendererBackend}
+            tokens={doc.tokens}
+            selectedNode={primarySelected}
+            onToggleCodeDrawer={onToggleCodeDrawer}
+            onCloseAll={onCloseSandboxDrawer}
+          />
+        </Suspense>
+      )}
     </div>
   );
 }

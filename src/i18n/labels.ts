@@ -110,7 +110,7 @@ export const LABELS: Record<Locale, StudioLabels> = {
     penHint:
       'Pen Active: Click to plot points · Enter / Double-Click Finish · Esc Cancel',
     savedLocally: 'Saved',
-    stack3dBtn: '3D Stack',
+    stack3dBtn: '3D Z-Stack',
     measureBtn: 'Measure',
     smartGuidesBtn: 'Guides',
     grid8pxBtn: '8px Grid',
@@ -171,7 +171,7 @@ export const LABELS: Record<Locale, StudioLabels> = {
     penHint:
       'Đang dùng bút Pen: Nhấp chọn điểm · Enter / Nhấp đúp hoàn tất · Esc hủy',
     savedLocally: 'Đã lưu',
-    stack3dBtn: '3D Stack',
+    stack3dBtn: '3D Z-Stack',
     measureBtn: 'Đo px',
     smartGuidesBtn: 'Đường gióng',
     grid8pxBtn: 'Lưới 8px',

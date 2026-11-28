@@ -61,6 +61,17 @@ import {
   saveWorkspaceToLocalStorage,
   serializeProjectFile,
 } from './engines/projectStorage';
+import {
+  DEFAULT_SHADER_CONFIG,
+  getShaderPaletteById,
+  getShaderPresetById,
+  repairArtboardContrastToAAA,
+  sanitizeShaderConfig,
+  type SandboxInteractiveState,
+  type ShaderPaletteId,
+  type ShaderPresetId,
+  type ShaderStudioConfig,
+} from './engines/shaderStudioEngine';
 import { LABELS } from './i18n/labels';
 import { TopBar } from './components/TopBar';
 import { ToolDock } from './components/ToolDock';
@@ -128,7 +139,7 @@ export function App() {
   const [snapshots, setSnapshots] = useState<DesignSnapshot[]>(() => [
     {
       id: 'snap-initial',
-      label: 'v4.0 Enterprise FinTech',
+      label: 'v7.0 Shader Studio FinTech',
       timestamp: formatClock(),
       doc: createDocumentByTemplateId('fintech-spatial'),
     },
@@ -155,6 +166,19 @@ export function App() {
   const [spacePressed, setSpacePressed] = useState(false);
   const [altPressed, setAltPressed] = useState(false);
   const [stack3D, setStack3D] = useState(false);
+  const [shaderConfig, setShaderConfig] = useState<ShaderStudioConfig>(
+    DEFAULT_SHADER_CONFIG,
+  );
+  const [sandboxOpen, setSandboxOpen] = useState(false);
+  const [codeDrawerOpen, setCodeDrawerOpen] = useState(false);
+  const [sandboxState, setSandboxState] =
+    useState<SandboxInteractiveState>('default');
+  const [wcagRepairSummary, setWcagRepairSummary] = useState<{
+    repairedCount: number;
+    passingAAAAfter: number;
+    totalAudited: number;
+    minRatioAfter: number;
+  } | null>(null);
   const [commandOpen, setCommandOpen] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
   const [tokenCompilerOpen, setTokenCompilerOpen] = useState(false);
@@ -335,13 +359,40 @@ export function App() {
       stageSizeRef.current = size;
       if (!hasCenteredInitialRef.current && size.width > 120 && size.height > 120) {
         hasCenteredInitialRef.current = true;
-        setViewport(
-          fitArtboardsToViewport(getDocumentArtboards(committedDoc), size, 52),
-        );
+        if (size.width < 520) {
+          const fitted = fitArtboardToViewport(committedDoc.artboard, size, 32);
+          setViewport({ ...fitted, x: fitted.x + 12 });
+        } else {
+          setViewport(
+            fitArtboardsToViewport(getDocumentArtboards(committedDoc), size, 52),
+          );
+        }
       }
     },
     [committedDoc],
   );
+
+  // Smoothly refit artboards whenever the bottom Live Code Drawer opens/closes so artboards stay cleanly framed
+  useEffect(() => {
+    if (!hasCenteredInitialRef.current) return;
+    const timer = window.setTimeout(() => {
+      const size = stageSizeRef.current;
+      if (size.width < 520) {
+        const fitted = fitArtboardToViewport(committedDoc.artboard, size, 32);
+        setViewport({ ...fitted, x: fitted.x + 12 });
+      } else {
+        setViewport(
+          fitArtboardsToViewport(
+            getDocumentArtboards(committedDoc),
+            size,
+            codeDrawerOpen ? 44 : 52,
+          ),
+        );
+      }
+    }, 60);
+    return () => window.clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [codeDrawerOpen]);
 
   const handleFitToScreen = useCallback(() => {
     setViewport(
@@ -941,6 +992,66 @@ export function App() {
     [artboards, committedDoc, commitDocument, selectedIds],
   );
 
+  const handleUpdateShaderConfig = useCallback(
+    (patch: Partial<ShaderStudioConfig>) => {
+      setShaderConfig((prev) => sanitizeShaderConfig({ ...prev, ...patch }));
+    },
+    [],
+  );
+
+  const handleSelectShaderPreset = useCallback(
+    (preset: ShaderPresetId) => {
+      const meta = getShaderPresetById(preset);
+      setShaderConfig((prev) =>
+        sanitizeShaderConfig({
+          ...prev,
+          enabled: true,
+          preset: meta.id,
+          warp: meta.defaultWarp,
+          speed: meta.defaultSpeed,
+          grain: meta.defaultGrain,
+          scale: meta.defaultScale,
+        }),
+      );
+      notify(`GLSL Shader: ${meta.name}`);
+    },
+    [notify],
+  );
+
+  const handleSelectShaderPalette = useCallback(
+    (paletteId: ShaderPaletteId) => {
+      const pal = getShaderPaletteById(paletteId);
+      setShaderConfig((prev) =>
+        sanitizeShaderConfig({
+          ...prev,
+          enabled: true,
+          paletteId: pal.id,
+          colors: pal.colors,
+        }),
+      );
+      notify(`Shader Palette: ${pal.name}`);
+    },
+    [notify],
+  );
+
+  const handleRepairWcagAAA = useCallback(() => {
+    const result = repairArtboardContrastToAAA(committedDoc, activeArtboardId);
+    if (result.repairedCount > 0) {
+      commitDocument({ ...committedDoc, nodes: result.nextNodes });
+    }
+    setWcagRepairSummary({
+      repairedCount: result.repairedCount,
+      passingAAAAfter: result.passingAAAAfter,
+      totalAudited: result.totalAudited,
+      minRatioAfter: result.minRatioAfter,
+    });
+    notify(
+      result.repairedCount > 0
+        ? `WCAG AAA Repaired ${result.repairedCount} layers · min ${result.minRatioAfter.toFixed(1)}:1`
+        : `All ${result.totalAudited} artboard layers already WCAG AAA (${result.minRatioAfter.toFixed(1)}:1)`,
+    );
+  }, [activeArtboardId, committedDoc, commitDocument, notify]);
+
   const handleExecuteCommand = useCallback(
     (commandId: string) => {
       const generated = createGeneratedNodesForCommand(commandId, committedDoc);
@@ -961,6 +1072,31 @@ export function App() {
         return;
       }
 
+      if (commandId === 'shader-mesh-warp') {
+        handleSelectShaderPreset('mesh-warp');
+        return;
+      }
+      if (commandId === 'shader-iridescence') {
+        handleSelectShaderPreset('liquid-iridescence');
+        return;
+      }
+      if (commandId === 'shader-dot-orbit') {
+        handleSelectShaderPreset('kinetic-dot-orbit');
+        return;
+      }
+      if (commandId === 'shader-liquid-glass') {
+        handleSelectShaderPreset('liquid-glass-refract');
+        return;
+      }
+      if (commandId === 'open-live-code') {
+        setCodeDrawerOpen(true);
+        setSandboxOpen(true);
+        return;
+      }
+      if (commandId === 'open-component-sandbox') {
+        setSandboxOpen((v) => !v);
+        return;
+      }
       if (commandId === 'mode-present-prototype') {
         setPlayerOpen(true);
         return;
@@ -1032,6 +1168,7 @@ export function App() {
       handleAlignSelection,
       handleExportProjectFile,
       handleSaveSnapshot,
+      handleSelectShaderPreset,
       handleSelectTemplate,
       handleUpdateTokens,
       notify,
@@ -1284,6 +1421,38 @@ export function App() {
           onToggleCanvasBackdrop={toggleCanvasBackdrop}
           stack3D={stack3D}
           onToggleStack3D={() => setStack3D((v) => !v)}
+          shaderConfig={shaderConfig}
+          onUpdateShaderConfig={handleUpdateShaderConfig}
+          onSelectShaderPreset={handleSelectShaderPreset}
+          onSelectShaderPalette={handleSelectShaderPalette}
+          sandboxOpen={sandboxOpen}
+          onToggleSandbox={() =>
+            setSandboxOpen((prev) => {
+              const next = !prev;
+              if (!next) setSandboxState('default');
+              return next;
+            })
+          }
+          codeDrawerOpen={codeDrawerOpen}
+          onToggleCodeDrawer={() =>
+            setCodeDrawerOpen((prev) => {
+              const next = !prev;
+              if (next) setSandboxOpen(true);
+              return next;
+            })
+          }
+          onCloseSandboxDrawer={() => {
+            setSandboxOpen(false);
+            setCodeDrawerOpen(false);
+            setSandboxState('default');
+          }}
+          sandboxState={sandboxState}
+          onSelectSandboxState={(st) => {
+            setSandboxOpen(true);
+            setSandboxState(st);
+          }}
+          onRepairWcagAAA={handleRepairWcagAAA}
+          wcagRepairSummary={wcagRepairSummary}
           breakpoint={breakpoint}
           onSelectBreakpoint={handleSelectBreakpoint}
           smartGuidesEnabled={smartGuidesEnabled}
